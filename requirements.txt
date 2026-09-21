@@ -1,2 +1,1 @@
-flet
-yt-dlp
+flet build apk --requirements yt-dlp --yes
