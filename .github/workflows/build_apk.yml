@@ -28,14 +28,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install "flet[all]" yt-dlp
 
-      - name: Create Flet App Directory Structure
+      - name: Create and Setup Flet App
         run: |
-          mkdir -p assets
           flet create temp_app
-          cp main.py temp_app/
+          cp main.py temp_app/main.py
+          cp main.py temp_app/src/main.py 2>/dev/null || true
           cp requirements.txt temp_app/ 2>/dev/null || true
 
-      - name: Build APK (Auto Approve Flutter Setup)
+      - name: Build APK
         run: |
           cd temp_app
           flet build apk --yes
