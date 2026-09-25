@@ -46,23 +46,26 @@ jobs:
 
       - name: Setup Android SDK Command-line Tools & Accept Licenses
         run: |
-          # 1. تحديد وتجهيز مسار Android SDK الخاص بـ Buildozer
-          export ANDROID_HOME="${HOME}/.buildozer/android/platform/android-sdk"
-          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          # 1. التوجه مباشرة إلى مجلد Android SDK المستهدف
+          ANDROID_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+          mkdir -p "$ANDROID_ROOT"
+          cd "$ANDROID_ROOT"
           
-          # 2. تحميل أدوات cmdline-tools الحديثة من جوجل
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
-          unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+          # 2. تحميل أدوات cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmd.zip
+          unzip -q cmd.zip
+          rm cmd.zip
           
-          # 3. إعادة تسمية المجلد المستخرج إلى "latest" (مطلوب لعمل sdkmanager بشكل صحيح)
-          mv "\(ANDROID_HOME/cmdline-tools/cmdline-tools" "\)ANDROID_HOME/cmdline-tools/latest"
+          # 3. إعادة ترتيب المجلدات داخلياً بأمان تام (بدون استخدام متغيرات معقدة)
+          mv cmdline-tools latest
+          mkdir cmdline-tools
+          mv latest cmdline-tools/
           
-          # 4. إنشاء مسار "tools" الوهمي الذي يبحث عنه Buildozer وربطه بالمسار الحقيقي
-          ln -s "\(ANDROID_HOME/cmdline-tools/latest" "\)ANDROID_HOME/tools"
+          # 4. إنشاء مسار tools الوهمي لـ Buildozer
+          ln -s "\(PWD/cmdline-tools/latest" "\)PWD/tools"
           
-          # 5. قبول جميع تراخيص أندرويد وتجاهل خطأ Broken pipe
-          export PATH="\(ANDROID_HOME/cmdline-tools/latest/bin:\)PATH"
-          yes | sdkmanager --licenses || true
+          # 5. قبول جميع التراخيص
+          yes | ./cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Build debug APK
         run: buildozer android debug
