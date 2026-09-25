@@ -46,26 +46,13 @@ jobs:
 
       - name: Setup Android SDK Command-line Tools & Accept Licenses
         run: |
-          # 1. التوجه مباشرة إلى مجلد Android SDK المستهدف
-          ANDROID_ROOT="$HOME/.buildozer/android/platform/android-sdk"
-          mkdir -p "$ANDROID_ROOT"
-          cd "$ANDROID_ROOT"
-          
-          # 2. تحميل أدوات cmdline-tools
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmd.zip
-          unzip -q cmd.zip
-          rm cmd.zip
-          
-          # 3. إعادة ترتيب المجلدات داخلياً بأمان تام (بدون استخدام متغيرات معقدة)
-          mv cmdline-tools latest
-          mkdir cmdline-tools
-          mv latest cmdline-tools/
-          
-          # 4. إنشاء مسار tools الوهمي لـ Buildozer
-          ln -s "\(PWD/cmdline-tools/latest" "\)PWD/tools"
-          
-          # 5. قبول جميع التراخيص
-          yes | ./cmdline-tools/latest/bin/sdkmanager --licenses || true
+          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /home/runner/cmdline-tools.zip
+          unzip -q /home/runner/cmdline-tools.zip -d /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools
+          mv /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools/cmdline-tools /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools/latest
+          rm /home/runner/cmdline-tools.zip
+          ln -s /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools/latest /home/runner/.buildozer/android/platform/android-sdk/tools
+          yes | /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Build debug APK
         run: buildozer android debug
