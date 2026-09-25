@@ -1,102 +1,192 @@
-import flet as ft
-import yt_dlp
 import os
+import threading
 
-def main(page: ft.Page):
-    page.title = "مُحمّل الفيديوهات الذكي"
-    page.theme_mode = ft.ThemeMode.DARK
-    page.padding = 20
-    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
+from kivy.uix.spinner import Spinner
+from kivy.uix.progressbar import ProgressBar
+from kivy.clock import mainthread
+from kivy.utils import platform
 
-    # حقل إدخال الرابط
-    url_input = ft.TextField(
-        label="أدخل رابط الفيديو",
-        width=380,
-        autofocus=True
-    )
+import yt_dlp
 
-    # قائمة اختيار الجودة والصوت
-    quality_dropdown = ft.Dropdown(
-        width=380,
-        label="اختر الجودة المطلوبة",
-        value="best",
-        options=[
-            ft.dropdown.Option("best", "🚀 أعلى جودة فيديو متوفرة"),
-            ft.dropdown.Option("1080", "🎬 جودة عالية (1080p)"),
-            ft.dropdown.Option("720", "📺 جودة متوسطة (720p)"),
-            ft.dropdown.Option("480", "📱 جودة منخفضة (480p)"),
-            ft.dropdown.Option("audio", "🎵 صوت فقط (أعلى جودة صوت متوفرة Best Audio)"),
-        ],
-    )
 
-    status_text = ft.Text("", size=14)
+def get_download_dir():
+    if platform == "android":
+        from android.storage import primary_external_storage_path
+        path = os.path.join(primary_external_storage_path(), "Download", "YTDownloader")
+    else:
+        path = os.path.join(os.path.expanduser("~"), "Downloads", "YTDownloader")
+    os.makedirs(path, exist_ok=True)
+    return path
 
-    def download_click(e):
-        url = url_input.value.strip() if url_input.value else ""
+
+class DownloaderApp(App):
+    def build(self):
+        self.title = "محمل الفيديوهات"
+        root = BoxLayout(orientation="vertical", padding=20, spacing=12)
+
+        self.url_input = TextInput(
+            hint_text="الصق رابط الفيديو هنا",
+            size_hint_y=None,
+            height=50,
+            multiline=False,
+        )
+        root.add_widget(self.url_input)
+
+        self.check_btn = Button(text="فحص الجودات المتوفرة", size_hint_y=None, height=55)
+        self.check_btn.bind(on_release=self.check_formats)
+        root.add_widget(self.check_btn)
+
+        self.quality_spinner = Spinner(
+            text="اختر الجودة",
+            values=[],
+            size_hint_y=None,
+            height=50,
+            disabled=True,
+        )
+        root.add_widget(self.quality_spinner)
+
+        self.download_btn = Button(text="تحميل", size_hint_y=None, height=55, disabled=True)
+        self.download_btn.bind(on_release=self.download_video)
+        root.add_widget(self.download_btn)
+
+        self.progress = ProgressBar(max=100, value=0, size_hint_y=None, height=20)
+        root.add_widget(self.progress)
+
+        self.status_label = Label(text="", size_hint_y=None, height=100)
+        root.add_widget(self.status_label)
+
+        root.add_widget(BoxLayout())  # spacer
+
+        if platform == "android":
+            self.request_android_permissions()
+
+        return root
+
+    def request_android_permissions(self):
+        try:
+            from android.permissions import request_permissions, Permission
+            request_permissions([
+                Permission.INTERNET,
+                Permission.WRITE_EXTERNAL_STORAGE,
+                Permission.READ_EXTERNAL_STORAGE,
+            ])
+        except Exception:
+            pass
+
+    @mainthread
+    def set_status(self, text):
+        self.status_label.text = text
+
+    @mainthread
+    def set_progress(self, value):
+        self.progress.value = value
+
+    @mainthread
+    def populate_qualities(self, options):
+        self.quality_spinner.values = options
+        if options:
+            self.quality_spinner.text = options[0]
+            self.quality_spinner.disabled = False
+            self.download_btn.disabled = False
+        self.check_btn.disabled = False
+
+    # ---------- فحص الجودات ----------
+
+    def check_formats(self, instance):
+        url = self.url_input.text.strip()
         if not url:
-            status_text.value = "❌ يرجى إدخال الرابط أولاً!"
-            status_text.color = "red"
-            page.update()
+            self.set_status("الرجاء إدخال رابط")
             return
-        
-        status_text.value = "⏳ جاري التحميل... يرجى الانتظار"
-        status_text.color = "orange"
-        page.update()
+        self.check_btn.disabled = True
+        self.set_status("جاري الفحص...")
+        threading.Thread(target=self._check_formats_thread, args=(url,), daemon=True).start()
 
-        # إعداد مسار الحفظ (أندرويد أو كمبيوتر)
-        if os.path.exists("/sdcard/Download"):
-            download_folder = "/sdcard/Download"
+    def _check_formats_thread(self, url):
+        try:
+            ydl_opts = {"quiet": True, "skip_download": True}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+
+            formats = info.get("formats", [])
+            heights = set()
+            for f in formats:
+                h = f.get("height")
+                # نختار فقط الصيغ التي تحتوي فيديو + صوت معًا (بدون الحاجة لدمج بـ ffmpeg)
+                if h and f.get("vcodec") != "none" and f.get("acodec") != "none":
+                    heights.add(h)
+
+            sorted_heights = sorted(heights, reverse=True)
+            options = [f"{h}p" for h in sorted_heights]
+            options.append("صوت فقط")
+
+            if not sorted_heights:
+                self.set_status("لا توجد جودات فيديو+صوت مدمجة لهذا الفيديو")
+
+            self.populate_qualities(options)
+            self.set_status("اختر الجودة ثم اضغط تحميل")
+        except Exception as e:
+            self.set_status(f"خطأ: {str(e)[:150]}")
+            self.check_btn.disabled = False
+
+    # ---------- التحميل ----------
+
+    def download_video(self, instance):
+        url = self.url_input.text.strip()
+        quality = self.quality_spinner.text
+        if not url or quality == "اختر الجودة":
+            self.set_status("اختر رابط وجودة أولاً")
+            return
+        self.download_btn.disabled = True
+        self.set_status("جاري التحميل...")
+        self.set_progress(0)
+        threading.Thread(target=self._download_thread, args=(url, quality), daemon=True).start()
+
+    def _progress_hook(self, d):
+        if d.get("status") == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            downloaded = d.get("downloaded_bytes", 0)
+            if total:
+                percent = downloaded / total * 100
+                self.set_progress(percent)
+                self.set_status(f"جاري التحميل... {percent:.0f}%")
+        elif d.get("status") == "finished":
+            self.set_status("اكتمل التحميل، جاري الحفظ...")
+
+    def _download_thread(self, url, quality):
+        output_dir = get_download_dir()
+        output_template = os.path.join(output_dir, "%(title).80s.%(ext)s")
+
+        if quality == "صوت فقط":
+            ydl_opts = {
+                "format": "bestaudio/best",
+                "outtmpl": output_template,
+                "quiet": True,
+                "progress_hooks": [self._progress_hook],
+            }
         else:
-            download_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
-
-        selected_option = quality_dropdown.value
-
-        # تحديد أسلوب التحميل والجودة
-        if selected_option == "audio":
-            # اختيار أعلى دقة ونقاء للصوت فقط بدون فيديو
-            format_option = 'bestaudio/best'
-        elif selected_option == "1080":
-            format_option = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
-        elif selected_option == "720":
-            format_option = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
-        elif selected_option == "480":
-            format_option = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
-        else: # best
-            format_option = 'bestvideo+bestaudio/best'
-
-        ydl_opts = {
-            'outtmpl': os.path.join(download_folder, '%(title)s.%(ext)s'),
-            'format': format_option,
-            'noplaylist': True,
-        }
+            height = quality.replace("p", "")
+            ydl_opts = {
+                "format": f"best[height<={height}][vcodec!=none][acodec!=none]/best[height<={height}]",
+                "outtmpl": output_template,
+                "quiet": True,
+                "progress_hooks": [self._progress_hook],
+            }
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-            
-            status_text.value = "✅ تم تحميل الصوت بأعلى جودة بنجاح!" if selected_option == "audio" else "✅ تم التحميل بنجاح!"
-            status_text.color = "green"
-            url_input.value = ""
-        except Exception as err:
-            status_text.value = "❌ حدث خطأ أثناء التحميل"
-            status_text.color = "red"
-        
-        page.update()
+                ydl.extract_info(url, download=True)
+            self.set_progress(100)
+            self.set_status(f"تم التحميل بنجاح إلى:\n{output_dir}")
+        except Exception as e:
+            self.set_status(f"فشل التحميل: {str(e)[:150]}")
+        finally:
+            self.download_btn.disabled = False
 
-    download_button = ft.Button(
-        content=ft.Text("بدء التحميل 🚀"),
-        on_click=download_click,
-        width=220
-    )
-
-    page.add(
-        ft.Text("مُحمّل الفيديوهات والصوتيات", size=24, weight=ft.FontWeight.BOLD),
-        ft.Divider(),
-        url_input,
-        quality_dropdown,
-        download_button,
-        status_text
-    )
 
 if __name__ == "__main__":
-    ft.run(main)
+    DownloaderApp().run()
