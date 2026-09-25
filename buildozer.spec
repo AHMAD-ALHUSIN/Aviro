@@ -7,7 +7,9 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 
 version = 1.0
-requirements = python3,kivy==2.3.0,yt-dlp,certifi,chardet,idna,urllib3,requests,brotli
+
+# تم التعديل هنا: تحديد إصدار بايثون لتجنب أخطاء C-API مع بايثون 3.14
+requirements = python3==3.11.9,kivy==2.3.0,yt-dlp,certifi,chardet,idna,urllib3,requests,brotli
 
 orientation = portrait
 fullscreen = 0
