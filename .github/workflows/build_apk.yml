@@ -44,11 +44,17 @@ jobs:
           sed -i "s|yt-dlp,|yt-dlp==$LATEST,|g" buildozer.spec
           grep yt-dlp buildozer.spec
 
-      - name: Build debug APK
-        run: yes | buildozer android debug
+      - name: Auto-accept Android SDK Licenses
+        run: |
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          # تجهيز ملفات الموافقة المسبقة على التراخيص مباشرة
+          ANDROID_HOME="$HOME/.buildozer/android/platform/android-sdk"
+          mkdir -p "$ANDROID_HOME/licenses"
+          echo -e "\n8933b522257f6535150f81211ce12313b0d782d0\n734b2258ba17d1780c97823b2c81864422934030\na5a018303038703a4e9a3f28328f41065538e12d" > "$ANDROID_HOME/licenses/android-sdk-license"
+          echo -e "\n84831b9409646a578f30576952de7e0e4131aedc" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ytdownloader-apk
-          path: bin/*.apk
+      - name: Build debug APK
+        run: |
+          # القبول المتكرر اللانهائي لكل الشروط ومطالبات التحديث
+          yes y | buildozer android debug
