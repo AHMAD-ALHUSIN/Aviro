@@ -1,7 +1,0 @@
-[project]
-name = "my_downloader_app"
-version = "0.1.0"
-dependencies = [
-    "flet",
-    "yt-dlp"
-]
