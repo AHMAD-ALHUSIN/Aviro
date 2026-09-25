@@ -29,7 +29,7 @@ jobs:
             libncurses5-dev libncursesw5-dev \
             cmake \
             libffi-dev libssl-dev \
-            adb
+            adb wget
 
       - name: Install buildozer and Cython
         run: |
@@ -44,17 +44,22 @@ jobs:
           sed -i "s|yt-dlp,|yt-dlp==$LATEST,|g" buildozer.spec
           grep yt-dlp buildozer.spec
 
-      - name: Auto-accept Android SDK Licenses
+      - name: Setup Android SDK Command-line Tools & Accept Licenses
         run: |
-          mkdir -p ~/.android
-          touch ~/.android/repositories.cfg
-          # تجهيز ملفات الموافقة المسبقة على التراخيص مباشرة
-          ANDROID_HOME="$HOME/.buildozer/android/platform/android-sdk"
-          mkdir -p "$ANDROID_HOME/licenses"
-          echo -e "\n8933b522257f6535150f81211ce12313b0d782d0\n734b2258ba17d1780c97823b2c81864422934030\na5a018303038703a4e9a3f28328f41065538e12d" > "$ANDROID_HOME/licenses/android-sdk-license"
-          echo -e "\n84831b9409646a578f30576952de7e0e4131aedc" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          # 1. إنشاء مجلدات Android SDK
+          mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest
+          
+          # 2. تحميل cmdline-tools الحديثة مباشرة من Google
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
+          unzip -q cmdline-tools.zip
+          mv cmdline-tools/* ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/
+          rm -rf cmdline-tools cmdline-tools.zip
+
+          # 3. قبول جميع التراخيص بشكل سليم ودون Broken pipe
+          export ANDROID_HOME="$HOME/.buildozer/android/platform/android-sdk"
+          export PATH="\(ANDROID_HOME/cmdline-tools/latest/bin:\)PATH"
+          
+          yes | sdkmanager --licenses || true
 
       - name: Build debug APK
-        run: |
-          # القبول المتكرر اللانهائي لكل الشروط ومطالبات التحديث
-          yes y | buildozer android debug
+        run: buildozer android debug
