@@ -42,24 +42,33 @@ jobs:
             | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])")
           echo "yt-dlp latest: $LATEST"
           sed -i "s|yt-dlp,|yt-dlp==$LATEST,|g" buildozer.spec
-          grep yt-dlp buildozer.spec
+          grep yt-dlp buildozer.spec || true
 
       - name: Setup Android SDK Command-line Tools & Accept Licenses
         run: |
-          # 1. إنشاء مجلدات Android SDK
-          mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest
+          # 1. تحديد وتجهيز مسار Android SDK الخاص بـ Buildozer
+          export ANDROID_HOME="${HOME}/.buildozer/android/platform/android-sdk"
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
           
-          # 2. تحميل cmdline-tools الحديثة مباشرة من Google
+          # 2. تحميل أدوات cmdline-tools الحديثة من جوجل
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
-          unzip -q cmdline-tools.zip
-          mv cmdline-tools/* ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/
-          rm -rf cmdline-tools cmdline-tools.zip
-
-          # 3. قبول جميع التراخيص بشكل سليم ودون Broken pipe
-          export ANDROID_HOME="$HOME/.buildozer/android/platform/android-sdk"
-          export PATH="\(ANDROID_HOME/cmdline-tools/latest/bin:\)PATH"
+          unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
           
+          # 3. إعادة تسمية المجلد المستخرج إلى "latest" (مطلوب لعمل sdkmanager بشكل صحيح)
+          mv "\(ANDROID_HOME/cmdline-tools/cmdline-tools" "\)ANDROID_HOME/cmdline-tools/latest"
+          
+          # 4. إنشاء مسار "tools" الوهمي الذي يبحث عنه Buildozer وربطه بالمسار الحقيقي
+          ln -s "\(ANDROID_HOME/cmdline-tools/latest" "\)ANDROID_HOME/tools"
+          
+          # 5. قبول جميع تراخيص أندرويد وتجاهل خطأ Broken pipe
+          export PATH="\(ANDROID_HOME/cmdline-tools/latest/bin:\)PATH"
           yes | sdkmanager --licenses || true
 
       - name: Build debug APK
         run: buildozer android debug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ytdownloader-apk
+          path: bin/*.apk
