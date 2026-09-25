@@ -45,7 +45,7 @@ jobs:
           grep yt-dlp buildozer.spec
 
       - name: Build debug APK
-        run: buildozer android debug
+        run: yes | buildozer android debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
