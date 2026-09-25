@@ -12,12 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # بيئة التشغيل الأساسية لـ GitHub Actions
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # الخطوة السحرية لحل المشكلة: فرض استخدام Java 17 كافتراضي
+      # ضروري جداً لعمل أدوات Android SDK الحديثة بدون الانهيار الصامت
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -37,19 +38,21 @@ jobs:
             libffi-dev libssl-dev \
             adb wget
 
+      # تثبيت نسخة مستقرة من Cython لتجنب مشاكل الترجمة
       - name: Install buildozer and Cython
         run: |
           pip install --upgrade pip
-          pip install buildozer cython
+          pip install buildozer cython==3.0.10
 
+      # جلب أحدث إصدار من yt-dlp ديناميكياً وإضافته لـ buildozer.spec
       - name: Inject latest yt-dlp version
         run: |
-          LATEST=$(curl -s https://pypi.org/pypi/yt-dlp/json \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])")
+          LATEST=$(curl -s https://pypi.org/pypi/yt-dlp/json | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])")
           echo "yt-dlp latest: $LATEST"
-          sed -i "s|yt-dlp,|yt-dlp==$LATEST,|g" buildozer.spec
-          grep yt-dlp buildozer.spec || true
+          sed -i "s|yt-dlp,|yt-dlp==$LATEST,|g" buildozer.spec || true
+          grep "^requirements =" buildozer.spec || true
 
+      # الحل الجذري لمشكلة تراخيص الأندرويد وتجهيز الـ SDK
       - name: Setup Android SDK Command-line Tools & Accept Licenses
         run: |
           mkdir -p /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools
