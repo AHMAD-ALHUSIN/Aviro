@@ -1,89 +1,246 @@
 import os
+import traceback
 import threading
+
 from kivy.app import App
+from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
 from kivy.uix.label import Label
+from kivy.uix.progressbar import ProgressBar
+from kivy.uix.widget import Widget
+from kivy.graphics import Color, Rectangle, RoundedRectangle
 from kivy.clock import Clock
-from kivy.utils import platform
+from kivy.utils import platform, get_color_from_hex
+
 import yt_dlp
+
+# ---------------------------------------------------------------- colors ---
+BG_COLOR = get_color_from_hex('#12141A')
+CARD_COLOR = get_color_from_hex('#1C1F27')
+ACCENT_COLOR = get_color_from_hex('#FF4B4B')
+ACCENT_COLOR_DARK = get_color_from_hex('#D63C3C')
+TEXT_COLOR = get_color_from_hex('#F5F5F5')
+SUBTEXT_COLOR = get_color_from_hex('#9AA0AC')
+
+
+class RoundedButton(Button):
+    """A flat button with a rounded, colored background (no default Kivy skin)."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.background_normal = ''
+        self.background_down = ''
+        self.background_color = (0, 0, 0, 0)
+        self.color = TEXT_COLOR
+        with self.canvas.before:
+            self._color_instr = Color(*ACCENT_COLOR)
+            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[14])
+        self.bind(pos=self._update_rect, size=self._update_rect)
+        self.bind(state=self._update_state_color)
+
+    def _update_rect(self, *_):
+        self._rect.pos = self.pos
+        self._rect.size = self.size
+
+    def _update_state_color(self, *_):
+        self._color_instr.rgba = ACCENT_COLOR_DARK if self.state == 'down' else ACCENT_COLOR
+
+
+class Card(BoxLayout):
+    """A simple rounded 'card' panel used as a background container."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        with self.canvas.before:
+            Color(*CARD_COLOR)
+            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[18])
+        self.bind(pos=self._update_rect, size=self._update_rect)
+
+    def _update_rect(self, *_):
+        self._rect.pos = self.pos
+        self._rect.size = self.size
+
 
 class YTDownloaderApp(App):
     def build(self):
-        self.layout = BoxLayout(orientation='vertical', padding=20, spacing=10)
-        
-        self.url_input = TextInput(hint_text='أدخل رابط الفيديو هنا...', size_hint=(1, 0.2))
-        self.download_btn = Button(text='تحميل الفيديو', size_hint=(1, 0.2))
-        self.download_btn.bind(on_press=self.start_download)
-        self.status_label = Label(text='التطبيق جاهز', size_hint=(1, 0.6), halign='center')
+        self.title = 'Video Downloader'
+        Window.clearcolor = BG_COLOR
 
-        self.layout.add_widget(self.url_input)
-        self.layout.add_widget(self.download_btn)
-        self.layout.add_widget(self.status_label)
+        root = BoxLayout(orientation='vertical', padding=24, spacing=18)
+
+        # --- header ----------------------------------------------------
+        header = Label(
+            text='Video Downloader',
+            font_size='26sp',
+            bold=True,
+            color=TEXT_COLOR,
+            size_hint=(1, None),
+            height=48,
+        )
+        subheader = Label(
+            text='Paste a video link and download it in the best available quality',
+            font_size='14sp',
+            color=SUBTEXT_COLOR,
+            size_hint=(1, None),
+            height=28,
+        )
+
+        # --- card with the input + button -------------------------------
+        card = Card(orientation='vertical', padding=20, spacing=16, size_hint=(1, None), height=180)
+
+        self.url_input = TextInput(
+            hint_text='Paste video URL here...',
+            multiline=False,
+            size_hint=(1, None),
+            height=48,
+            padding=[14, 12, 14, 12],
+            background_color=(1, 1, 1, 0.06),
+            foreground_color=TEXT_COLOR,
+            hint_text_color=SUBTEXT_COLOR,
+            cursor_color=ACCENT_COLOR,
+        )
+
+        self.download_btn = RoundedButton(
+            text='Download',
+            font_size='16sp',
+            bold=True,
+            size_hint=(1, None),
+            height=48,
+        )
+        self.download_btn.bind(on_press=self.start_download)
+
+        self.progress_bar = ProgressBar(max=100, value=0, size_hint=(1, None), height=8)
+
+        card.add_widget(self.url_input)
+        card.add_widget(self.download_btn)
+        card.add_widget(self.progress_bar)
+
+        # --- status ------------------------------------------------------
+        self.status_label = Label(
+            text='Ready',
+            font_size='14sp',
+            color=SUBTEXT_COLOR,
+            halign='center',
+            valign='top',
+            size_hint=(1, 1),
+        )
+        self.status_label.bind(size=self._update_label_text_size)
+
+        root.add_widget(header)
+        root.add_widget(subheader)
+        root.add_widget(card)
+        root.add_widget(self.status_label)
+        root.add_widget(Widget())  # spacer to push everything up
 
         self.request_permissions()
-        return self.layout
+        return root
+
+    def _update_label_text_size(self, instance, size):
+        instance.text_size = (size[0], None)
 
     def request_permissions(self):
         if platform == 'android':
-            from android.permissions import request_permissions, Permission
-            request_permissions([
-                Permission.INTERNET,
-                Permission.WRITE_EXTERNAL_STORAGE,
-                Permission.READ_EXTERNAL_STORAGE
-            ])
+            try:
+                from android.permissions import request_permissions, Permission
+                request_permissions([
+                    Permission.INTERNET,
+                    Permission.WRITE_EXTERNAL_STORAGE,
+                    Permission.READ_EXTERNAL_STORAGE,
+                ])
+            except Exception:
+                pass
 
     def start_download(self, instance):
         url = self.url_input.text.strip()
         if not url:
-            self.status_label.text = "يرجى إدخال الرابط أولاً!"
+            self.set_status('Please paste a video URL first.')
             return
 
-        self.status_label.text = "جاري التحميل ودمج الصوت بالفيديو... يرجى الانتظار"
+        self.progress_bar.value = 0
+        self.set_status('Preparing download...')
         self.download_btn.disabled = True
-        
-        threading.Thread(target=self.download_video, args=(url,)).start()
+
+        threading.Thread(target=self.download_video, args=(url,), daemon=True).start()
+
+    def get_save_directory(self):
+        """
+        Save to the app's own external files directory. This needs no extra
+        runtime permission on modern Android (scoped storage), unlike writing
+        straight into /storage/emulated/0/Download which is commonly blocked
+        and can silently fail on Android 11+.
+        """
+        if platform == 'android':
+            try:
+                from jnius import autoclass
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                context = PythonActivity.mActivity.getApplicationContext()
+                ext_dir = context.getExternalFilesDir(None)
+                if ext_dir is not None:
+                    return ext_dir.getAbsolutePath()
+            except Exception:
+                pass
+            return '/storage/emulated/0/Download'
+        return os.getcwd()
+
+    def progress_hook(self, d):
+        if d.get('status') == 'downloading':
+            percent_str = (d.get('_percent_str') or '').strip().replace('%', '')
+            try:
+                percent = float(percent_str)
+            except ValueError:
+                percent = None
+            speed = (d.get('_speed_str') or '').strip()
+            eta = (d.get('_eta_str') or '').strip()
+
+            def _update(dt):
+                if percent is not None:
+                    self.progress_bar.value = percent
+                self.set_status(f'Downloading... {percent_str}%  {speed}  ETA {eta}')
+
+            Clock.schedule_once(_update)
+        elif d.get('status') == 'finished':
+            Clock.schedule_once(lambda dt: self.set_status('Finishing up...'))
+
+    def set_status(self, text):
+        self.status_label.text = text
 
     def download_video(self, url):
         try:
-            if platform == 'android':
-                save_path = '/storage/emulated/0/Download/%(title)s.%(ext)s'
-            else:
-                save_path = '%(title)s.%(ext)s'
-
-            # مسار ffmpeg المباشر الموجود في الجذر بجانب main.py
-            app_dir = os.path.dirname(os.path.abspath(__file__))
-            ffmpeg_path = os.path.join(app_dir, 'ffmpeg')
-
-            # منح صلاحيات التشغيل لملف ffmpeg
-            if os.path.exists(ffmpeg_path):
-                try:
-                    os.chmod(ffmpeg_path, 0o755)
-                except Exception:
-                    pass
+            save_dir = self.get_save_directory()
+            save_path = os.path.join(save_dir, '%(title).100s.%(ext)s')
 
             ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                # Highest-quality format that already contains both video AND
+                # audio in a single file, so no ffmpeg merge step is needed.
+                'format': 'best',
                 'outtmpl': save_path,
                 'quiet': True,
                 'no_warnings': True,
+                'noprogress': False,
+                'socket_timeout': 30,
+                'retries': 3,
+                'progress_hooks': [self.progress_hook],
             }
-
-            # ربط yt-dlp بملف ffmpeg
-            if os.path.exists(ffmpeg_path):
-                ydl_opts['ffmpeg_location'] = ffmpeg_path
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
-            Clock.schedule_once(lambda dt: self.update_status("تم التحميل ودمج الصوت مع الفيديو بنجاح!\nتجد الملف في مجلد التنزيلات (Download)"))
-        except Exception as e:
-            Clock.schedule_once(lambda dt: self.update_status(f"حدث خطأ أثناء التحميل:\n{str(e)}"))
+            Clock.schedule_once(lambda dt: self.finish_success())
+        except Exception:
+            err = traceback.format_exc(limit=2)
+            Clock.schedule_once(lambda dt: self.finish_error(err))
 
-    def update_status(self, text):
-        self.status_label.text = text
+    def finish_success(self):
+        self.progress_bar.value = 100
+        self.set_status('Download complete! Saved inside the app folder.')
         self.download_btn.disabled = False
+
+    def finish_error(self, err):
+        self.set_status(f'Download failed:\n{err}')
+        self.download_btn.disabled = False
+
 
 if __name__ == '__main__':
     YTDownloaderApp().run()
