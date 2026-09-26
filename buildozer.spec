@@ -20,6 +20,11 @@ android.permissions = INTERNET, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE
 
 android.api = 33
 android.minapi = 21
+
+# قبول التراخيص تلقائياً وتحديد إصدار مستقر لأدوات البناء (يحل مشكلة خطأ 37)
+android.accept_sdk_license = True
+android.build_tools_version = 33.0.2
+
 # تثبيت إصدار NDK المستقر والمتوافق
 android.ndk = 25b
 android.archs = arm64-v8a
