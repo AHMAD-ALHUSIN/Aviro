@@ -8,8 +8,8 @@ source.include_exts = py,png,jpg,kv,atlas
 
 version = 1.0
 
-# تبسيط القائمة — Docker image يتحكم بالتوافق تلقائياً
-requirements = python3,kivy==2.2.1,yt-dlp,certifi,idna,urllib3,requests
+# Python 3.11 مثبّت صراحةً في كل مكان — هذا هو المفتاح
+requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.2.1,yt-dlp,certifi,idna,urllib3,requests
 
 orientation = portrait
 fullscreen = 0
