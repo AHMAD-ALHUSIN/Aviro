@@ -12,6 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Cache كل ما يحمّله Docker من SDK/NDK/Python
+      - name: Cache Buildozer directory
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            .buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
       - name: Inject latest yt-dlp version
         run: |
           LATEST=$(curl -s https://pypi.org/pypi/yt-dlp/json \
@@ -24,6 +35,7 @@ jobs:
         run: |
           docker run --rm \
             --volume "$(pwd)":/home/user/hostcwd \
+            --volume "$HOME/.buildozer":/home/user/.buildozer \
             kivy/buildozer:latest \
             android debug
 
