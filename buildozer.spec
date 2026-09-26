@@ -10,7 +10,7 @@ source.include_patterns = ffmpeg, *.so
 
 version = 0.1
 
-requirements = python3==3.11,kivy==2.2.1,pillow,yt-dlp,certifi,idna,urllib3,requests
+requirements = python3==3.11,hostpython3==3.11,kivy==2.2.1,pillow,yt-dlp,certifi,idna,urllib3,requests
 
 orientation = portrait
 fullscreen = 0
