@@ -23,14 +23,23 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython
 
-      - name: Download FFmpeg Binary for Android (arm64-v8a)
+      - name: Build FFmpeg using ffmpeg-android-maker
         run: |
-          echo "Downloading FFmpeg binary for Android arm64-v8a..."
-          # تنزيل ملف ffmpeg التنفيذي المجمع المخصص للأندرويد مباشرة
-          curl -L -o ffmpeg https://raw.githubusercontent.com/Kakuec/ffmpeg-android-executable/main/arm64-v8a/ffmpeg
-          chmod +x ffmpeg
-          # طباعة حجم الملف للتأكد من اكتمال التنزيل
-          ls -lh ffmpeg
+          echo "Cloning ffmpeg-android-maker..."
+          git clone https://github.com/Javernaut/ffmpeg-android-maker.git ffmpeg-maker
+          cd ffmpeg-maker
+          
+          echo "Building FFmpeg binary for arm64-v8a..."
+          export ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME
+          ./ffmpeg-android-maker.sh -a arm64-v8a
+          
+          echo "Copying generated binary..."
+          cp output/bin/ffmpeg ../ffmpeg
+          cd ..
+          chmod +x ./ffmpeg
+          
+          echo "Verifying FFmpeg size..."
+          ls -lh ./ffmpeg
 
       - name: Build APK with Buildozer
         run: |
