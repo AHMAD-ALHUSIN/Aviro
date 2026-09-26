@@ -1,5 +1,17 @@
+import sys
+import io
 import os
 import threading
+
+# Fix for Android: stdout/stderr don't have .write() — redirect them
+if not hasattr(sys.stdout, 'write'):
+    sys.stdout = io.StringIO()
+if not hasattr(sys.stderr, 'write'):
+    sys.stderr = io.StringIO()
+
+# Suppress Kivy logs to avoid file-write issues on Android
+os.environ['KIVY_NO_ENV_CONFIG'] = '1'
+os.environ['KIVY_LOG_MODE'] = 'PYTHON'
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -12,6 +24,13 @@ from kivy.clock import mainthread
 from kivy.utils import platform
 
 import yt_dlp
+
+
+# Suppress yt-dlp output entirely (avoids any stdout.write calls)
+class _QuietLogger:
+    def debug(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): pass
 
 
 def get_download_dir():
@@ -119,7 +138,12 @@ class DownloaderApp(App):
 
     def _check_formats_thread(self, url):
         try:
-            ydl_opts = {"quiet": True, "skip_download": True}
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "logger": _QuietLogger(),
+                "skip_download": True,
+            }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
@@ -178,6 +202,8 @@ class DownloaderApp(App):
                 "format": "bestaudio/best",
                 "outtmpl": output_template,
                 "quiet": True,
+                "no_warnings": True,
+                "logger": _QuietLogger(),
                 "progress_hooks": [self._progress_hook],
             }
         else:
@@ -189,6 +215,8 @@ class DownloaderApp(App):
                 ),
                 "outtmpl": output_template,
                 "quiet": True,
+                "no_warnings": True,
+                "logger": _QuietLogger(),
                 "progress_hooks": [self._progress_hook],
             }
 
