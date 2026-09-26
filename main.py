@@ -1,5 +1,4 @@
 import os
-import traceback
 import threading
 
 from kivy.app import App
@@ -10,13 +9,13 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.label import Label
 from kivy.uix.progressbar import ProgressBar
 from kivy.uix.widget import Widget
-from kivy.graphics import Color, Rectangle, RoundedRectangle
+from kivy.graphics import Color, RoundedRectangle
 from kivy.clock import Clock
 from kivy.utils import platform, get_color_from_hex
 
 import yt_dlp
 
-# ---------------------------------------------------------------- colors ---
+# --- colors ---
 BG_COLOR = get_color_from_hex('#12141A')
 CARD_COLOR = get_color_from_hex('#1C1F27')
 ACCENT_COLOR = get_color_from_hex('#FF4B4B')
@@ -25,9 +24,16 @@ TEXT_COLOR = get_color_from_hex('#F5F5F5')
 SUBTEXT_COLOR = get_color_from_hex('#9AA0AC')
 
 
-class RoundedButton(Button):
-    """A flat button with a rounded, colored background (no default Kivy skin)."""
+class YTDLogger:
+    """كائن مخصص للتسجيل يمنع خطأ AttributeError على بيئة أندرويد."""
+    def debug(self, msg): pass
+    def info(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): pass
+    def write(self, msg): pass  # يمنع خطأ 'str' object has no attribute 'write'
 
+
+class RoundedButton(Button):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.background_normal = ''
@@ -49,8 +55,6 @@ class RoundedButton(Button):
 
 
 class Card(BoxLayout):
-    """A simple rounded 'card' panel used as a background container."""
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         with self.canvas.before:
@@ -70,7 +74,6 @@ class YTDownloaderApp(App):
 
         root = BoxLayout(orientation='vertical', padding=24, spacing=18)
 
-        # --- header ----------------------------------------------------
         header = Label(
             text='Video Downloader',
             font_size='26sp',
@@ -87,7 +90,6 @@ class YTDownloaderApp(App):
             height=28,
         )
 
-        # --- card with the input + button -------------------------------
         card = Card(orientation='vertical', padding=20, spacing=16, size_hint=(1, None), height=180)
 
         self.url_input = TextInput(
@@ -117,7 +119,6 @@ class YTDownloaderApp(App):
         card.add_widget(self.download_btn)
         card.add_widget(self.progress_bar)
 
-        # --- status ------------------------------------------------------
         self.status_label = Label(
             text='Ready',
             font_size='14sp',
@@ -132,7 +133,7 @@ class YTDownloaderApp(App):
         root.add_widget(subheader)
         root.add_widget(card)
         root.add_widget(self.status_label)
-        root.add_widget(Widget())  # spacer to push everything up
+        root.add_widget(Widget())
 
         self.request_permissions()
         return root
@@ -165,12 +166,6 @@ class YTDownloaderApp(App):
         threading.Thread(target=self.download_video, args=(url,), daemon=True).start()
 
     def get_save_directory(self):
-        """
-        Save to the app's own external files directory. This needs no extra
-        runtime permission on modern Android (scoped storage), unlike writing
-        straight into /storage/emulated/0/Download which is commonly blocked
-        and can silently fail on Android 11+.
-        """
         if platform == 'android':
             try:
                 from jnius import autoclass
@@ -212,15 +207,16 @@ class YTDownloaderApp(App):
             save_path = os.path.join(save_dir, '%(title).100s.%(ext)s')
 
             ydl_opts = {
-                # Highest-quality format that already contains both video AND
-                # audio in a single file, so no ffmpeg merge step is needed.
-                'format': 'best',
+                # تجربة أفضل جودة مدمجة أولاً، ثم التراجع لأي صيغة متوفرة عند عدم وجود أفضل جودة
+                'format': 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
                 'outtmpl': save_path,
+                'logger': YTDLogger(),  # حماية التسجيل لمنع انهيار البرنامج
                 'quiet': True,
                 'no_warnings': True,
                 'noprogress': False,
                 'socket_timeout': 30,
-                'retries': 3,
+                'retries': 5,
+                'nocheckcertificate': True,
                 'progress_hooks': [self.progress_hook],
             }
 
@@ -228,8 +224,8 @@ class YTDownloaderApp(App):
                 ydl.download([url])
 
             Clock.schedule_once(lambda dt: self.finish_success())
-        except Exception:
-            err = traceback.format_exc(limit=2)
+        except Exception as e:
+            err = str(e)
             Clock.schedule_once(lambda dt: self.finish_error(err))
 
     def finish_success(self):
