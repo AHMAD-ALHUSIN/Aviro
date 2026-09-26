@@ -28,10 +28,11 @@ jobs:
           pip install --upgrade pip
           pip install "cython<3" buildozer
 
-      - name: Accept Android SDK Licenses
+      - name: Pre-accept Android SDK Licenses
         run: |
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
+          # قبول التراخيص لجميع حزم Android SDK المثبتة والمستقبلية
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
           yes | $ANDROID_HOME/tools/bin/sdkmanager --licenses || true
 
@@ -46,7 +47,8 @@ jobs:
 
       - name: Build APK with Buildozer
         run: |
-          buildozer android debug
+          # قبول التراخيص آلياً أثناء تشغيل buildozer لمنع التوقف عند Accept? (y/N)
+          yes | buildozer android debug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
