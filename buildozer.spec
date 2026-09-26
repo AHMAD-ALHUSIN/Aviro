@@ -1,5 +1,5 @@
 [app]
-title = محمل الفيديوهات
+title = Video Downloader
 package.name = ytdownloader
 package.domain = org.ahmad
 
@@ -8,8 +8,9 @@ source.include_exts = py,png,jpg,kv,atlas
 
 version = 1.0
 
-# Python 3.11 مثبّت صراحةً في كل مكان — هذا هو المفتاح
-requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.2.1,yt-dlp,certifi,idna,urllib3,requests
+requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.2.1,pillow,yt-dlp,certifi,idna,urllib3,requests
+
+android.icon.filename = %(source.dir)s/icon.png
 
 orientation = portrait
 fullscreen = 0
