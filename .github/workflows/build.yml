@@ -26,8 +26,14 @@ jobs:
       - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
-          # تثبيت Cython إصدار 0.29 لضمان التوافق مع Kivy و p4a
           pip install "cython<3" buildozer
+
+      - name: Accept Android SDK Licenses
+        run: |
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          yes | $ANDROID_HOME/tools/bin/sdkmanager --licenses || true
 
       - name: Set Executable Permissions for FFmpeg
         run: |
@@ -40,8 +46,6 @@ jobs:
 
       - name: Build APK with Buildozer
         run: |
-          mkdir -p ~/.android
-          touch ~/.android/repositories.cfg
           buildozer android debug
 
       - name: Upload APK Artifact
