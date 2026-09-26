@@ -236,6 +236,14 @@ class YTDownloaderApp(App):
             err = str(e)
             Clock.schedule_once(lambda dt: self.finish_error(err))
 
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            Clock.schedule_once(lambda dt: self.finish_success())
+        except Exception as e:
+            err = str(e)
+            Clock.schedule_once(lambda dt: self.finish_error(err))
+
     def finish_success(self):
         self.progress_bar.value = 100
         self.set_status('Download complete! Saved inside the app folder.')
