@@ -5,12 +5,13 @@ package.name = ytdownloader
 package.domain = org.myapps
 source.dir = .
 
-# تضمين كافة امتدادات الميديا بالإضافة لملفات .so وملف ffmpeg بدون امتداد
+# تضمين كافة ملفات .so وملف ffmpeg الموجودة بجانب main.py
 source.include_exts = py, png, jpg, kv, atlas, so
 source.include_patterns = ffmpeg, *.so
 
 version = 0.1
 
+# تصحيح المتطلبات وإزالة hostpython3
 requirements = python3, kivy==2.2.1, pillow, yt-dlp, certifi, idna, urllib3, requests, ffpyplayer
 
 orientation = portrait
