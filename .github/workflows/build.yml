@@ -26,8 +26,8 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          pip install --upgrade pip
-          pip install "cython<3" buildozer
+          python -m pip install --upgrade pip
+          python -m pip install "cython>=0.29.36,<3" buildozer
 
       - name: Accept Android SDK Licenses
         run: |
