@@ -7,21 +7,49 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
 
-      # Cache كل ما يحمّله Docker من SDK/NDK/Python
-      - name: Cache Buildozer directory
+      # تثبيت Python 3.11 صراحةً — 3.12+ تسبب خطأ cgi، 3.13+ تحذفه تماماً
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            git zip unzip \
+            autoconf libtool \
+            pkg-config \
+            zlib1g-dev \
+            libncurses5-dev libncursesw5-dev \
+            cmake \
+            libffi-dev libssl-dev \
+            build-essential
+
+      - name: Cache buildozer (SDK/NDK/Python compiled)
         uses: actions/cache@v4
         with:
           path: |
             ~/.buildozer
             .buildozer
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: |
-            buildozer-${{ runner.os }}-
+          key: buildozer-${{ runner.os }}-py311-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-${{ runner.os }}-py311-
+
+      - name: Install build tools
+        run: |
+          python3 -m pip install --upgrade "pip<24" setuptools wheel
+          pip install "cython==0.29.36" "buildozer>=1.5.0" virtualenv
 
       - name: Inject latest yt-dlp version
         run: |
@@ -31,13 +59,8 @@ jobs:
           sed -i "s|yt-dlp,|yt-dlp==$LATEST,|g" buildozer.spec
           grep yt-dlp buildozer.spec
 
-      - name: Build APK (Official Kivy Docker Image)
-        run: |
-          docker run --rm \
-            --volume "$(pwd)":/home/user/hostcwd \
-            --volume "$HOME/.buildozer":/home/user/.buildozer \
-            kivy/buildozer:latest \
-            android debug
+      - name: Build APK
+        run: buildozer -v android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
