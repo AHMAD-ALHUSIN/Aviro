@@ -10,7 +10,8 @@ source.include_patterns = ffmpeg, *.so
 
 version = 0.1
 
-requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.2.1,pillow,yt-dlp,certifi,idna,urllib3,requests
+# تم إضافة pyjnius للاستدعاءات الخاصة بنظام الأندرويد
+requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.2.1,pillow,yt-dlp,certifi,idna,urllib3,requests,pyjnius
 
 orientation = portrait
 fullscreen = 0
