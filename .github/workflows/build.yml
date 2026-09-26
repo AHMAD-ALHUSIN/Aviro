@@ -7,7 +7,8 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # التغيير الهام: استخدام ubuntu-22.04 المضمون والمتوافق مع Buildozer و Python 3.11
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
@@ -21,33 +22,33 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libtool autoconf automake pkg-config libffi-dev libssl-dev gettext cmake zip unzip
+          sudo apt-get install -y build-essential libtool autoconf automake pkg-config libffi-dev libssl-dev gettext cmake zip unzip openjdk-17-jdk
 
       - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
           pip install "cython<3" buildozer
 
-      - name: Pre-accept Android SDK Licenses
+      - name: Accept Android SDK Licenses
         run: |
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
-          # قبول التراخيص لجميع حزم Android SDK المثبتة والمستقبلية
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          yes | $ANDROID_HOME/tools/bin/sdkmanager --licenses || true
 
       - name: Set Executable Permissions for FFmpeg
         run: |
           if [ -f "./ffmpeg" ]; then
             chmod +x ./ffmpeg
             ls -lh ./ffmpeg
-          else
-            echo "تنبيه: ملف ffmpeg غير موجود في الجذر الرئيسي للمستودع!"
           fi
 
       - name: Build APK with Buildozer
+        # إلغاء توجيهات NDK القديمة من البيئة وتحديد JAVA_HOME الصحيحة
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ""
+          ANDROID_NDK_ROOT: ""
         run: |
-          # قبول التراخيص آلياً أثناء تشغيل buildozer لمنع التوقف عند Accept? (y/N)
           yes | buildozer android debug
 
       - name: Upload APK Artifact
