@@ -16,17 +16,18 @@ from kivy.utils import platform, get_color_from_hex
 
 import yt_dlp
 
-# --- Colors ---
+# --- UI Colors ---
 BG_COLOR = get_color_from_hex('#12141A')
 CARD_COLOR = get_color_from_hex('#1C1F27')
 ACCENT_COLOR = get_color_from_hex('#FF4B4B')
 ACCENT_COLOR_DARK = get_color_from_hex('#D63C3C')
+BTN_FETCH_COLOR = get_color_from_hex('#2A65C7')
 TEXT_COLOR = get_color_from_hex('#F5F5F5')
 SUBTEXT_COLOR = get_color_from_hex('#9AA0AC')
 
 
 class YTDLogger:
-    """Custom logger to prevent stdout crashes on Android"""
+    """Custom logger to prevent output stream crashes on Android"""
     def debug(self, msg): pass
     def info(self, msg): pass
     def warning(self, msg): pass
@@ -35,6 +36,7 @@ class YTDLogger:
 
 
 class RoundedButton(Button):
+    """Custom button with rounded corners and pressed state styling"""
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.background_normal = ''
@@ -43,7 +45,7 @@ class RoundedButton(Button):
         self.color = TEXT_COLOR
         with self.canvas.before:
             self._color_instr = Color(*ACCENT_COLOR)
-            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[14])
+            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[12])
         self.bind(pos=self._update_rect, size=self._update_rect)
         self.bind(state=self._update_state_color)
 
@@ -56,6 +58,7 @@ class RoundedButton(Button):
 
 
 class Card(BoxLayout):
+    """Container panel for input elements"""
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         with self.canvas.before:
@@ -70,40 +73,53 @@ class Card(BoxLayout):
 
 class YTDownloaderApp(App):
     def build(self):
-        self.title = 'Video Downloader'
+        self.title = 'Media Downloader'
         Window.clearcolor = BG_COLOR
 
         self.format_map = {}
 
-        # Top padding set to 110 to push the layout significantly down from the top bar
-        root = BoxLayout(orientation='vertical', padding=[24, 110, 24, 20], spacing=16)
+        # Root Layout
+        root = BoxLayout(orientation='vertical', padding=[20, 20, 20, 20])
 
-        # Header
+        # Spacer Top (Pushes content down to center it on screen)
+        root.add_widget(Widget(size_hint_y=1))
+
+        # Header Title & Subtitle
         header = Label(
-            text='Video & Audio Downloader',
-            font_size='24sp',
+            text='Video Downloader',
+            font_size='26sp',
             bold=True,
             color=TEXT_COLOR,
             size_hint=(1, None),
-            height=36,
+            height=38,
         )
         subheader = Label(
-            text='Paste link, fetch qualities, then download',
+            text='Paste link, select quality, and download',
             font_size='13sp',
             color=SUBTEXT_COLOR,
             size_hint=(1, None),
-            height=22,
+            height=24,
         )
 
-        # Main Card Container
-        card = Card(orientation='vertical', padding=16, spacing=12, size_hint=(1, None), height=260)
+        root.add_widget(header)
+        root.add_widget(subheader)
+        root.add_widget(Widget(size_hint_y=None, height=14))
+
+        # Centered Interactive Card Box
+        card = Card(
+            orientation='vertical',
+            padding=20,
+            spacing=14,  # Increased spacing between buttons
+            size_hint=(1, None),
+            height=290,
+        )
 
         self.url_input = TextInput(
-            hint_text='Paste video URL here...',
+            hint_text='Paste URL here...',
             multiline=False,
             size_hint=(1, None),
-            height=44,
-            padding=[12, 10, 12, 10],
+            height=46,
+            padding=[12, 11, 12, 11],
             background_color=(1, 1, 1, 0.06),
             foreground_color=TEXT_COLOR,
             hint_text_color=SUBTEXT_COLOR,
@@ -111,31 +127,33 @@ class YTDownloaderApp(App):
         )
 
         self.fetch_btn = Button(
-            text='1. Fetch Available Formats',
+            text='1. Fetch Qualities',
             font_size='14sp',
             bold=True,
-            background_color=(0.2, 0.45, 0.75, 1),
+            background_normal='',
+            background_color=BTN_FETCH_COLOR,
             color=TEXT_COLOR,
             size_hint=(1, None),
-            height=42,
+            height=46,
         )
         self.fetch_btn.bind(on_press=self.start_fetch_formats)
 
         self.quality_spinner = Spinner(
-            text='-- Select Format / Quality --',
+            text='-- Select Format --',
             values=(),
             size_hint=(1, None),
-            height=42,
-            background_color=(0.15, 0.17, 0.22, 1),
+            height=44,
+            background_normal='',
+            background_color=(0.14, 0.16, 0.22, 1),
             color=TEXT_COLOR,
         )
 
         self.download_btn = RoundedButton(
-            text='2. Download Selected',
+            text='2. Download Now',
             font_size='15sp',
             bold=True,
             size_hint=(1, None),
-            height=44,
+            height=48,
             disabled=True,
         )
         self.download_btn.bind(on_press=self.start_download)
@@ -148,22 +166,25 @@ class YTDownloaderApp(App):
         card.add_widget(self.download_btn)
         card.add_widget(self.progress_bar)
 
+        root.add_widget(card)
+
         # Status Label
         self.status_label = Label(
             text='Ready',
-            font_size='14sp',
+            font_size='13sp',
             color=SUBTEXT_COLOR,
             halign='center',
             valign='top',
-            size_hint=(1, 1),
+            size_hint=(1, None),
+            height=60,
         )
         self.status_label.bind(size=self._update_label_text_size)
 
-        root.add_widget(header)
-        root.add_widget(subheader)
-        root.add_widget(card)
+        root.add_widget(Widget(size_hint_y=None, height=10))
         root.add_widget(self.status_label)
-        root.add_widget(Widget())
+
+        # Spacer Bottom (Pushes content up to maintain center alignment)
+        root.add_widget(Widget(size_hint_y=1))
 
         self.request_permissions()
         return root
@@ -189,7 +210,7 @@ class YTDownloaderApp(App):
             self.set_status('Please paste a video URL first.')
             return
 
-        self.set_status('Fetching available formats...')
+        self.set_status('Fetching qualities...')
         self.fetch_btn.disabled = True
         self.download_btn.disabled = True
         self.quality_spinner.values = ()
@@ -211,35 +232,40 @@ class YTDownloaderApp(App):
 
                 options = {}
 
-                # Default fallback options
-                options['[Video + Audio] Best Quality (No FFmpeg needed)'] = 'best[vcodec!=none][acodec!=none]/best'
-                options['[Audio Only] Best Available Audio'] = 'bestaudio/best'
+                # Default fallback options with simplified English names
+                options['Best Quality (Ready)'] = 'best[vcodec!=none][acodec!=none]/best'
+                options['Audio Only (Best)'] = 'bestaudio/best'
 
-                # Extract progressive formats (Video + Audio combined in single stream)
+                # Format extraction with short, clean labels
                 for f in formats:
                     vcodec = f.get('vcodec')
                     acodec = f.get('acodec')
-                    ext = f.get('ext', 'mp4')
+                    ext = (f.get('ext') or 'mp4').upper()
                     format_id = f.get('format_id')
+                    height = f.get('height')
 
-                    # Case 1: Video + Audio together
+                    # Combined Video + Audio
                     if vcodec != 'none' and acodec != 'none':
-                        height = f.get('height')
-                        label_text = f"[Video + Audio] {height}p ({ext})" if height else f"[Video + Audio] {ext}"
-                        options[label_text] = format_id
+                        label = f"{height}p ({ext})" if height else f"Video ({ext})"
+                        options[label] = format_id
 
-                    # Case 2: Audio Only
+                    # Video Only
+                    elif vcodec != 'none' and acodec == 'none':
+                        label = f"Video {height}p (No Sound)" if height else f"Video ({ext} No Sound)"
+                        options[label] = format_id
+
+                    # Audio Only
                     elif vcodec == 'none' and acodec != 'none':
                         abr = f.get('abr') or f.get('tbr')
-                        label_text = f"[Audio Only] {int(abr)} kbps ({ext})" if abr else f"[Audio Only] ({ext})"
-                        options[label_text] = format_id
+                        label = f"Audio {int(abr)}k ({ext})" if abr else f"Audio ({ext})"
+                        options[label] = format_id
 
                 def _update_spinner(dt):
                     self.format_map = options
                     self.quality_spinner.values = list(options.keys())
                     if self.quality_spinner.values:
                         self.quality_spinner.text = self.quality_spinner.values[0]
-                    self.set_status('Formats loaded! Select one and click Download.')
+                    self.set_status('Qualities loaded. Select format and tap Download.')
                     self.fetch_btn.disabled = False
                     self.download_btn.disabled = False
 
@@ -247,7 +273,7 @@ class YTDownloaderApp(App):
 
         except Exception as e:
             err = str(e)
-            Clock.schedule_once(lambda dt: self.set_status(f'Failed to fetch formats:\n{err}'))
+            Clock.schedule_once(lambda dt: self.set_status(f'Error fetching qualities:\n{err}'))
             Clock.schedule_once(lambda dt: setattr(self.fetch_btn, 'disabled', False))
 
     def start_download(self, instance):
@@ -255,7 +281,7 @@ class YTDownloaderApp(App):
         selected_text = self.quality_spinner.text
 
         if not url or selected_text not in self.format_map:
-            self.set_status('Please select a valid format from the list.')
+            self.set_status('Please select a valid quality option.')
             return
 
         selected_format_id = self.format_map[selected_text]
@@ -268,18 +294,30 @@ class YTDownloaderApp(App):
         threading.Thread(target=self.download_video, args=(url, selected_format_id), daemon=True).start()
 
     def get_save_directory(self):
+        """Save files directly into public Download folder"""
         if platform == 'android':
             try:
                 from jnius import autoclass
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
-                context = PythonActivity.mActivity.getApplicationContext()
-                ext_dir = context.getExternalFilesDir(None)
-                if ext_dir is not None:
-                    return ext_dir.getAbsolutePath()
+                Environment = autoclass('android.os.Environment')
+                download_dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if download_dir is not None:
+                    return download_dir.getAbsolutePath()
             except Exception:
                 pass
             return '/storage/emulated/0/Download'
         return os.getcwd()
+
+    def scan_file_to_gallery(self, file_path):
+        """Notify Android Media Scanner to reveal file in Gallery and Downloads"""
+        if platform == 'android':
+            try:
+                from jnius import autoclass
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                MediaScannerConnection = autoclass('android.media.MediaScannerConnection')
+                context = PythonActivity.mActivity.getApplicationContext()
+                MediaScannerConnection.scanFile(context, [file_path], None, None)
+            except Exception:
+                pass
 
     def progress_hook(self, d):
         if d.get('status') == 'downloading':
@@ -294,7 +332,7 @@ class YTDownloaderApp(App):
             def _update(dt):
                 if percent is not None:
                     self.progress_bar.value = percent
-                self.set_status(f'Downloading... {percent_str}%  {speed}  ETA {eta}')
+                self.set_status(f'Downloading... {percent_str}% | {speed} | ETA {eta}')
 
             Clock.schedule_once(_update)
         elif d.get('status') == 'finished':
@@ -322,7 +360,9 @@ class YTDownloaderApp(App):
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                self.scan_file_to_gallery(filename)
 
             Clock.schedule_once(lambda dt: self.finish_success())
         except Exception as e:
@@ -331,7 +371,7 @@ class YTDownloaderApp(App):
 
     def finish_success(self):
         self.progress_bar.value = 100
-        self.set_status('Download complete! Saved inside the app folder.')
+        self.set_status('Download complete! Saved in Downloads folder.')
         self.download_btn.disabled = False
         self.fetch_btn.disabled = False
 
