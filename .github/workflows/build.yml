@@ -12,7 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # تثبيت Python 3.11 صراحةً — 3.12+ تسبب خطأ cgi، 3.13+ تحذفه تماماً
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -28,16 +27,12 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            git zip unzip \
-            autoconf libtool \
-            pkg-config \
-            zlib1g-dev \
+            git zip unzip autoconf libtool \
+            pkg-config zlib1g-dev \
             libncurses5-dev libncursesw5-dev \
-            cmake \
-            libffi-dev libssl-dev \
-            build-essential
+            cmake libffi-dev libssl-dev build-essential
 
-      - name: Cache buildozer (SDK/NDK/Python compiled)
+      - name: Cache buildozer
         uses: actions/cache@v4
         with:
           path: |
@@ -49,7 +44,10 @@ jobs:
       - name: Install build tools
         run: |
           python3 -m pip install --upgrade "pip<24" setuptools wheel
-          pip install "cython==0.29.36" "buildozer>=1.5.0" virtualenv
+          pip install "cython==0.29.36" "buildozer>=1.5.0" virtualenv pillow
+
+      - name: Generate app icon
+        run: python3 generate_icon.py
 
       - name: Inject latest yt-dlp version
         run: |
