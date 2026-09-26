@@ -16,7 +16,7 @@ from kivy.utils import platform, get_color_from_hex
 
 import yt_dlp
 
-# --- الألوان ---
+# --- Colors ---
 BG_COLOR = get_color_from_hex('#12141A')
 CARD_COLOR = get_color_from_hex('#1C1F27')
 ACCENT_COLOR = get_color_from_hex('#FF4B4B')
@@ -26,7 +26,7 @@ SUBTEXT_COLOR = get_color_from_hex('#9AA0AC')
 
 
 class YTDLogger:
-    """كائن مخصص للتسجيل لمنع أخطاء الطباعة على أندرويد"""
+    """Custom logger to prevent stdout crashes on Android"""
     def debug(self, msg): pass
     def info(self, msg): pass
     def warning(self, msg): pass
@@ -73,30 +73,29 @@ class YTDownloaderApp(App):
         self.title = 'Video Downloader'
         Window.clearcolor = BG_COLOR
 
-        # خريطة لتخزين اسم الجودة كـ Key و format_id كـ Value
         self.format_map = {}
 
-        # تم زيادة الهامش العلوي (Padding Top = 65) لإنزال الواجهة عن أعلى الشاشة
-        root = BoxLayout(orientation='vertical', padding=[24, 65, 24, 18], spacing=16)
+        # Top padding set to 110 to push the layout significantly down from the top bar
+        root = BoxLayout(orientation='vertical', padding=[24, 110, 24, 20], spacing=16)
 
-        # --- العنوان ---
+        # Header
         header = Label(
-            text='Video Downloader',
-            font_size='26sp',
+            text='Video & Audio Downloader',
+            font_size='24sp',
             bold=True,
             color=TEXT_COLOR,
             size_hint=(1, None),
-            height=40,
+            height=36,
         )
         subheader = Label(
-            text='Paste link, fetch available qualities or audio, then download',
+            text='Paste link, fetch qualities, then download',
             font_size='13sp',
             color=SUBTEXT_COLOR,
             size_hint=(1, None),
-            height=24,
+            height=22,
         )
 
-        # --- بطاقة الإدخال والخيارات ---
+        # Main Card Container
         card = Card(orientation='vertical', padding=16, spacing=12, size_hint=(1, None), height=260)
 
         self.url_input = TextInput(
@@ -111,21 +110,19 @@ class YTDownloaderApp(App):
             cursor_color=ACCENT_COLOR,
         )
 
-        # زر فحص الجودات
         self.fetch_btn = Button(
-            text='1. Fetch Available Qualities / فحص الجودات',
+            text='1. Fetch Available Formats',
             font_size='14sp',
             bold=True,
-            background_color=(0.2, 0.5, 0.8, 1),
+            background_color=(0.2, 0.45, 0.75, 1),
             color=TEXT_COLOR,
             size_hint=(1, None),
             height=42,
         )
         self.fetch_btn.bind(on_press=self.start_fetch_formats)
 
-        # قائمة الجودات المنسدلة (Spinner)
         self.quality_spinner = Spinner(
-            text='-- Select Quality / اختر الجودة --',
+            text='-- Select Format / Quality --',
             values=(),
             size_hint=(1, None),
             height=42,
@@ -133,9 +130,8 @@ class YTDownloaderApp(App):
             color=TEXT_COLOR,
         )
 
-        # زر التحميل الرئيسي
         self.download_btn = RoundedButton(
-            text='2. Download Selected / تحميل',
+            text='2. Download Selected',
             font_size='15sp',
             bold=True,
             size_hint=(1, None),
@@ -152,7 +148,7 @@ class YTDownloaderApp(App):
         card.add_widget(self.download_btn)
         card.add_widget(self.progress_bar)
 
-        # --- نص الحالة ---
+        # Status Label
         self.status_label = Label(
             text='Ready',
             font_size='14sp',
@@ -187,14 +183,13 @@ class YTDownloaderApp(App):
             except Exception:
                 pass
 
-    # --- جلب قائمة الجودات والصوت ---
     def start_fetch_formats(self, instance):
         url = self.url_input.text.strip()
         if not url:
             self.set_status('Please paste a video URL first.')
             return
 
-        self.set_status('Fetching available qualities...')
+        self.set_status('Fetching available formats...')
         self.fetch_btn.disabled = True
         self.download_btn.disabled = True
         self.quality_spinner.values = ()
@@ -216,30 +211,35 @@ class YTDownloaderApp(App):
 
                 options = {}
 
-                # 1. جودات الصوت فقط
-                options['[صوت فقط] أعلى جودة صوت (Best Audio)'] = 'bestaudio/best'
-                for f in formats:
-                    if f.get('vcodec') == 'none' and f.get('acodec') != 'none':
-                        abr = f.get('abr') or f.get('tbr') or ''
-                        ext = f.get('ext', 'm4a')
-                        label = f"[صوت فقط] {int(abr)} kbps ({ext})" if abr else f"[صوت فقط] ({ext})"
-                        options[label] = f['format_id']
+                # Default fallback options
+                options['[Video + Audio] Best Quality (No FFmpeg needed)'] = 'best[vcodec!=none][acodec!=none]/best'
+                options['[Audio Only] Best Available Audio'] = 'bestaudio/best'
 
-                # 2. جودات الفيديو المدمجة (فيديو + صوت معاً في ملف واحد)
-                options['[فيديو] أفضل جودة مدمجة تلقائياً'] = 'best[vcodec!=none][acodec!=none]/best'
+                # Extract progressive formats (Video + Audio combined in single stream)
                 for f in formats:
-                    if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                    vcodec = f.get('vcodec')
+                    acodec = f.get('acodec')
+                    ext = f.get('ext', 'mp4')
+                    format_id = f.get('format_id')
+
+                    # Case 1: Video + Audio together
+                    if vcodec != 'none' and acodec != 'none':
                         height = f.get('height')
-                        ext = f.get('ext', 'mp4')
-                        label = f"[فيديو] {height}p ({ext})" if height else f"[فيديو] {f.get('format_note', 'video')} ({ext})"
-                        options[label] = f['format_id']
+                        label_text = f"[Video + Audio] {height}p ({ext})" if height else f"[Video + Audio] {ext}"
+                        options[label_text] = format_id
+
+                    # Case 2: Audio Only
+                    elif vcodec == 'none' and acodec != 'none':
+                        abr = f.get('abr') or f.get('tbr')
+                        label_text = f"[Audio Only] {int(abr)} kbps ({ext})" if abr else f"[Audio Only] ({ext})"
+                        options[label_text] = format_id
 
                 def _update_spinner(dt):
                     self.format_map = options
                     self.quality_spinner.values = list(options.keys())
                     if self.quality_spinner.values:
                         self.quality_spinner.text = self.quality_spinner.values[0]
-                    self.set_status('Qualities loaded! Select quality and click Download.')
+                    self.set_status('Formats loaded! Select one and click Download.')
                     self.fetch_btn.disabled = False
                     self.download_btn.disabled = False
 
@@ -247,16 +247,15 @@ class YTDownloaderApp(App):
 
         except Exception as e:
             err = str(e)
-            Clock.schedule_once(lambda dt: self.set_status(f'Failed to fetch qualities:\n{err}'))
+            Clock.schedule_once(lambda dt: self.set_status(f'Failed to fetch formats:\n{err}'))
             Clock.schedule_once(lambda dt: setattr(self.fetch_btn, 'disabled', False))
 
-    # --- بدء التحميل بناءً على الاختيار ---
     def start_download(self, instance):
         url = self.url_input.text.strip()
         selected_text = self.quality_spinner.text
 
         if not url or selected_text not in self.format_map:
-            self.set_status('Please select a valid quality from the list first.')
+            self.set_status('Please select a valid format from the list.')
             return
 
         selected_format_id = self.format_map[selected_text]
