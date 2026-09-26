@@ -26,23 +26,27 @@ def get_download_dir():
 
 class DownloaderApp(App):
     def build(self):
-        self.title = "محمل الفيديوهات"
+        self.title = "Video Downloader"
         root = BoxLayout(orientation="vertical", padding=20, spacing=12)
 
         self.url_input = TextInput(
-            hint_text="الصق رابط الفيديو هنا",
+            hint_text="Paste video URL here",
             size_hint_y=None,
             height=50,
             multiline=False,
         )
         root.add_widget(self.url_input)
 
-        self.check_btn = Button(text="فحص الجودات المتوفرة", size_hint_y=None, height=55)
+        self.check_btn = Button(
+            text="Check Available Qualities",
+            size_hint_y=None,
+            height=55,
+        )
         self.check_btn.bind(on_release=self.check_formats)
         root.add_widget(self.check_btn)
 
         self.quality_spinner = Spinner(
-            text="اختر الجودة",
+            text="Select Quality",
             values=[],
             size_hint_y=None,
             height=50,
@@ -50,7 +54,12 @@ class DownloaderApp(App):
         )
         root.add_widget(self.quality_spinner)
 
-        self.download_btn = Button(text="تحميل", size_hint_y=None, height=55, disabled=True)
+        self.download_btn = Button(
+            text="Download",
+            size_hint_y=None,
+            height=55,
+            disabled=True,
+        )
         self.download_btn.bind(on_release=self.download_video)
         root.add_widget(self.download_btn)
 
@@ -95,16 +104,18 @@ class DownloaderApp(App):
             self.download_btn.disabled = False
         self.check_btn.disabled = False
 
-    # ---------- فحص الجودات ----------
-
     def check_formats(self, instance):
         url = self.url_input.text.strip()
         if not url:
-            self.set_status("الرجاء إدخال رابط")
+            self.set_status("Please enter a URL")
             return
         self.check_btn.disabled = True
-        self.set_status("جاري الفحص...")
-        threading.Thread(target=self._check_formats_thread, args=(url,), daemon=True).start()
+        self.set_status("Checking available qualities...")
+        threading.Thread(
+            target=self._check_formats_thread,
+            args=(url,),
+            daemon=True,
+        ).start()
 
     def _check_formats_thread(self, url):
         try:
@@ -116,35 +127,36 @@ class DownloaderApp(App):
             heights = set()
             for f in formats:
                 h = f.get("height")
-                # نختار فقط الصيغ التي تحتوي فيديو + صوت معًا (بدون الحاجة لدمج بـ ffmpeg)
                 if h and f.get("vcodec") != "none" and f.get("acodec") != "none":
                     heights.add(h)
 
             sorted_heights = sorted(heights, reverse=True)
             options = [f"{h}p" for h in sorted_heights]
-            options.append("صوت فقط")
+            options.append("Audio Only")
 
             if not sorted_heights:
-                self.set_status("لا توجد جودات فيديو+صوت مدمجة لهذا الفيديو")
+                self.set_status("No combined video+audio formats found")
 
             self.populate_qualities(options)
-            self.set_status("اختر الجودة ثم اضغط تحميل")
+            self.set_status("Select quality then tap Download")
         except Exception as e:
-            self.set_status(f"خطأ: {str(e)[:150]}")
+            self.set_status(f"Error: {str(e)[:150]}")
             self.check_btn.disabled = False
-
-    # ---------- التحميل ----------
 
     def download_video(self, instance):
         url = self.url_input.text.strip()
         quality = self.quality_spinner.text
-        if not url or quality == "اختر الجودة":
-            self.set_status("اختر رابط وجودة أولاً")
+        if not url or quality == "Select Quality":
+            self.set_status("Please select a URL and quality first")
             return
         self.download_btn.disabled = True
-        self.set_status("جاري التحميل...")
+        self.set_status("Starting download...")
         self.set_progress(0)
-        threading.Thread(target=self._download_thread, args=(url, quality), daemon=True).start()
+        threading.Thread(
+            target=self._download_thread,
+            args=(url, quality),
+            daemon=True,
+        ).start()
 
     def _progress_hook(self, d):
         if d.get("status") == "downloading":
@@ -153,15 +165,15 @@ class DownloaderApp(App):
             if total:
                 percent = downloaded / total * 100
                 self.set_progress(percent)
-                self.set_status(f"جاري التحميل... {percent:.0f}%")
+                self.set_status(f"Downloading... {percent:.0f}%")
         elif d.get("status") == "finished":
-            self.set_status("اكتمل التحميل، جاري الحفظ...")
+            self.set_status("Download complete, saving file...")
 
     def _download_thread(self, url, quality):
         output_dir = get_download_dir()
         output_template = os.path.join(output_dir, "%(title).80s.%(ext)s")
 
-        if quality == "صوت فقط":
+        if quality == "Audio Only":
             ydl_opts = {
                 "format": "bestaudio/best",
                 "outtmpl": output_template,
@@ -171,7 +183,10 @@ class DownloaderApp(App):
         else:
             height = quality.replace("p", "")
             ydl_opts = {
-                "format": f"best[height<={height}][vcodec!=none][acodec!=none]/best[height<={height}]",
+                "format": (
+                    f"best[height<={height}][vcodec!=none][acodec!=none]"
+                    f"/best[height<={height}]"
+                ),
                 "outtmpl": output_template,
                 "quiet": True,
                 "progress_hooks": [self._progress_hook],
@@ -181,9 +196,9 @@ class DownloaderApp(App):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.extract_info(url, download=True)
             self.set_progress(100)
-            self.set_status(f"تم التحميل بنجاح إلى:\n{output_dir}")
+            self.set_status(f"Downloaded successfully!\nSaved to: {output_dir}")
         except Exception as e:
-            self.set_status(f"فشل التحميل: {str(e)[:150]}")
+            self.set_status(f"Download failed: {str(e)[:150]}")
         finally:
             self.download_btn.disabled = False
 
