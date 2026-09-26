@@ -37,7 +37,9 @@ jobs:
 
       - name: Install Buildozer and Cython
         run: |
-          pip install --upgrade pip setuptools wheel
+          # تثبيت pip بإصدار متوافق مع بيئة python-for-android
+          pip install "pip==23.1.2"
+          pip install setuptools wheel
           pip install "buildozer>=1.5.0" "cython==0.29.36"
 
       - name: Inject latest yt-dlp version
@@ -45,7 +47,7 @@ jobs:
           LATEST=$(curl -s https://pypi.org/pypi/yt-dlp/json \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])")
           echo "yt-dlp latest: $LATEST"
-          sed -i "s|yt-dlp|yt-dlp==$LATEST|g" buildozer.spec
+          sed -i "s|yt-dlp,|yt-dlp==$LATEST,|g" buildozer.spec
           grep yt-dlp buildozer.spec
 
       - name: Build debug APK
