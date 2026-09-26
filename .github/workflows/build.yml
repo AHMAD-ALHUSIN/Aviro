@@ -18,7 +18,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies and Buildozer
+      # تثبيت أدوات نظام Ubuntu الضرورية لبناء مكتبات C و Autotools
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libtool autoconf automake pkg-config libffi-dev libssl-dev gettext cmake zip unzip
+
+      - name: Install Python Dependencies and Buildozer
         run: |
           pip install --upgrade pip
           pip install buildozer cython
@@ -29,7 +35,7 @@ jobs:
             chmod +x ./ffmpeg
             ls -lh ./ffmpeg
           else
-            echo "ملاحظة: ملف ffmpeg غير موجود في الجذر الرئيسي للمستودع!"
+            echo "تنبيه: ملف ffmpeg غير موجود في الجذر الرئيسي للمستودع!"
           fi
 
       - name: Build APK with Buildozer
