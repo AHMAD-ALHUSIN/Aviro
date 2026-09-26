@@ -18,16 +18,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      # تثبيت أدوات نظام Ubuntu الضرورية لبناء مكتبات C و Autotools
       - name: Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libtool autoconf automake pkg-config libffi-dev libssl-dev gettext cmake zip unzip
 
-      - name: Install Python Dependencies and Buildozer
+      - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
-          pip install buildozer cython
+          # تثبيت Cython إصدار 0.29 لضمان التوافق مع Kivy و p4a
+          pip install "cython<3" buildozer
 
       - name: Set Executable Permissions for FFmpeg
         run: |
@@ -40,7 +40,9 @@ jobs:
 
       - name: Build APK with Buildozer
         run: |
-          yes | buildozer -v android debug
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          buildozer android debug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
