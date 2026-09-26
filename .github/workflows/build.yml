@@ -23,22 +23,13 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython
 
-      - name: Build FFmpeg using ffmpeg-android-maker
+      - name: Fetch Prebuilt FFmpeg for Android
         run: |
-          echo "Cloning ffmpeg-android-maker..."
-          git clone https://github.com/Javernaut/ffmpeg-android-maker.git ffmpeg-maker
-          cd ffmpeg-maker
-          
-          echo "Building FFmpeg binary for arm64-v8a..."
-          export ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME
-          ./ffmpeg-android-maker.sh -a arm64-v8a
-          
-          echo "Copying generated binary..."
-          cp output/bin/ffmpeg ../ffmpeg
-          cd ..
+          echo "Downloading prebuilt FFmpeg..."
+          curl -L -o ffmpeg.zip https://github.com/artic-fox/ffmpeg-android-maker/releases/download/v5.0.1/ffmpeg-android-maker-v5.0.1-arm64-v8a.zip
+          unzip -o ffmpeg.zip
+          cp ffmpeg/bin/ffmpeg ./ffmpeg
           chmod +x ./ffmpeg
-          
-          echo "Verifying FFmpeg size..."
           ls -lh ./ffmpeg
 
       - name: Build APK with Buildozer
