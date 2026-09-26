@@ -17,13 +17,13 @@ fullscreen = 0
 
 android.permissions = INTERNET, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE
 
-android.api = 33
+android.api = 34
 android.minapi = 21
 
 android.accept_sdk_license = True
-android.build_tools_version = 33.0.2
+android.build_tools_version = 34.0.0
 
-android.ndk = 25b
+android.ndk = 25c
 android.archs = arm64-v8a
 android.allow_backup = True
 
