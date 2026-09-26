@@ -57,12 +57,12 @@ class YTDownloaderApp(App):
 
             # إعدادات yt-dlp: (best[ext=mp4]/best) تضمن تحميل فيديو وصوت معاً!
             ydl_opts = {
-                'format': 'best[ext=mp4]/best', 
+                'format': 'best', # هذه الكلمة تجبره على جلب أفضل ملف يحتوي على صوت وصورة معاً
                 'outtmpl': save_path,
                 'quiet': True,
                 'no_warnings': True
             }
-
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
