@@ -8,7 +8,9 @@ source.include_exts = py,png,jpg,kv,atlas
 
 version = 1.0
 
-requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.0,yt-dlp,certifi,idna,urllib3,requests
+# yt-dlp بدون رقم إصدار — سيُحقن تلقائيًا بآخر إصدار عند كل بناء عبر CI
+# pip==23.1.2 مثبّت لتجنب خطأ open_rich_spinner
+requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.0,yt-dlp,certifi,idna,urllib3,requests,pip==23.1.2
 
 orientation = portrait
 fullscreen = 0
@@ -20,6 +22,9 @@ android.ndk = 25b
 android.archs = arm64-v8a, armeabi-v7a
 android.allow_backup = True
 android.accept_sdk_license = True
+
+# حذف مكتبات Unix غير متوفرة في Android NDK (grp, spwd)
+p4a.remove_paths = Modules/grpmodule.c,Modules/spwdmodule.c
 
 [buildozer]
 log_level = 2
