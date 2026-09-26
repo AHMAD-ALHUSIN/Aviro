@@ -12,7 +12,7 @@ source.include_patterns = ffmpeg, *.so
 version = 0.1
 
 # تصحيح المتطلبات وإزالة hostpython3
-requirements = python3, kivy==2.2.1, pillow, yt-dlp, certifi, idna, urllib3, requests, ffpyplayer
+requirements = python3, kivy==2.2.1, pillow, yt-dlp, certifi, idna, urllib3, requests
 
 orientation = portrait
 fullscreen = 0
