@@ -207,10 +207,10 @@ class YTDownloaderApp(App):
             save_path = os.path.join(save_dir, '%(title).100s.%(ext)s')
 
             ydl_opts = {
-                # تجربة أفضل جودة مدمجة أولاً، ثم التراجع لأي صيغة متوفرة عند عدم وجود أفضل جودة
-                'format': 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
+                # اختيار أعلى جودة تحتوي على (فيديو + صوت) في ملف واحد فقط بدون دمج
+                'format': 'best[vcodec!=none][acodec!=none]/best',
                 'outtmpl': save_path,
-                'logger': YTDLogger(),  # حماية التسجيل لمنع انهيار البرنامج
+                'logger': YTDLogger(),
                 'quiet': True,
                 'no_warnings': True,
                 'noprogress': False,
@@ -219,6 +219,14 @@ class YTDownloaderApp(App):
                 'nocheckcertificate': True,
                 'progress_hooks': [self.progress_hook],
             }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            Clock.schedule_once(lambda dt: self.finish_success())
+        except Exception as e:
+            err = str(e)
+            Clock.schedule_once(lambda dt: self.finish_error(err))
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
