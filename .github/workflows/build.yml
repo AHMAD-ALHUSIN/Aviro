@@ -25,12 +25,12 @@ jobs:
 
       - name: Download FFmpeg Binary for Android (arm64-v8a)
         run: |
-          echo "Downloading official compiled FFmpeg for Android..."
-          wget https://github.com/artic-fox/ffmpeg-android-maker/releases/download/v5.0.1/ffmpeg-android-maker-v5.0.1-arm64-v8a.zip -O ffmpeg.zip
-          unzip -o ffmpeg.zip
-          cp ffmpeg/bin/ffmpeg ./ffmpeg
-          chmod +x ./ffmpeg
-          ls -lh ./ffmpeg
+          echo "Downloading FFmpeg binary for Android arm64-v8a..."
+          # تنزيل ملف ffmpeg التنفيذي المجمع المخصص للأندرويد مباشرة
+          curl -L -o ffmpeg https://raw.githubusercontent.com/Kakuec/ffmpeg-android-executable/main/arm64-v8a/ffmpeg
+          chmod +x ffmpeg
+          # طباعة حجم الملف للتأكد من اكتمال التنزيل
+          ls -lh ffmpeg
 
       - name: Build APK with Buildozer
         run: |
