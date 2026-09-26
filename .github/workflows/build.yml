@@ -23,14 +23,14 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython
 
-      - name: Fetch Prebuilt FFmpeg for Android
+      - name: Set Executable Permissions for FFmpeg
         run: |
-          echo "Downloading prebuilt FFmpeg..."
-          curl -L -o ffmpeg.zip https://github.com/artic-fox/ffmpeg-android-maker/releases/download/v5.0.1/ffmpeg-android-maker-v5.0.1-arm64-v8a.zip
-          unzip -o ffmpeg.zip
-          cp ffmpeg/bin/ffmpeg ./ffmpeg
-          chmod +x ./ffmpeg
-          ls -lh ./ffmpeg
+          if [ -f "./ffmpeg" ]; then
+            chmod +x ./ffmpeg
+            ls -lh ./ffmpeg
+          else
+            echo "ملاحظة: ملف ffmpeg غير موجود في الجذر الرئيسي للمستودع!"
+          fi
 
       - name: Build APK with Buildozer
         run: |
