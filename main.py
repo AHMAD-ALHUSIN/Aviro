@@ -52,11 +52,11 @@ class YTDownloaderApp(App):
             else:
                 save_path = '%(title)s.%(ext)s'
 
-            # تحديد مسار ffmpeg المباشر الموجود بجانب main.py
+            # مسار ffmpeg المباشر الموجود في الجذر بجانب main.py
             app_dir = os.path.dirname(os.path.abspath(__file__))
             ffmpeg_path = os.path.join(app_dir, 'ffmpeg')
 
-            # إعطاء صلاحية التشغيل لملف ffmpeg
+            # منح صلاحيات التشغيل لملف ffmpeg
             if os.path.exists(ffmpeg_path):
                 try:
                     os.chmod(ffmpeg_path, 0o755)
@@ -70,7 +70,7 @@ class YTDownloaderApp(App):
                 'no_warnings': True,
             }
 
-            # إسناد المسار لـ yt-dlp
+            # ربط yt-dlp بملف ffmpeg
             if os.path.exists(ffmpeg_path):
                 ydl_opts['ffmpeg_location'] = ffmpeg_path
 
