@@ -37,10 +37,8 @@ jobs:
 
       - name: Install Buildozer and Cython
         run: |
-          # تثبيت pip بإصدار متوافق مع بيئة python-for-android
-          pip install "pip==23.1.2"
-          pip install setuptools wheel
-          pip install "buildozer>=1.5.0" "cython==0.29.36"
+          pip install --upgrade pip setuptools wheel
+          pip install "buildozer>=1.5.0" "cython==0.29.32"
 
       - name: Inject latest yt-dlp version
         run: |
