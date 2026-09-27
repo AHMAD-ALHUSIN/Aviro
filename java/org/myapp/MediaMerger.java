@@ -14,7 +14,6 @@ import java.util.concurrent.CountDownLatch;
 
 public class MediaMerger {
     
-    // هذه الدالة سيتم استدعاؤها من بايثون باستخدام PyJnius
     public String mergeBlocking(Context context, String videoPath, String audioPath, String outputPath) {
         CountDownLatch latch = new CountDownLatch(1);
         final String[] resultMsg = new String[1];
@@ -46,8 +45,7 @@ public class MediaMerger {
 
             transformer.start(composition, outputPath);
             
-            // انتظار انتهاء الدمج
-            latch.await();
+            latch.await(); // توقيف مؤشر الترابط حتى يكتمل الدمج
             
         } catch (Exception e) {
             resultMsg[0] = "Exception: " + e.getMessage();
