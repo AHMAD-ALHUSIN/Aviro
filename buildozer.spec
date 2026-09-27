@@ -28,7 +28,7 @@ android.ndk = 25c
 android.archs = arm64-v8a
 android.allow_backup = True
 
-android.add_src = java
+android.add_src = src/main/java
 android.gradle_dependencies = androidx.media3:media3-transformer:1.3.0, androidx.media3:media3-common:1.3.0
 android.enable_androidx = True
 
