@@ -308,8 +308,8 @@ class YTDownloaderApp(App):
             else:
                 cache_dir = os.getcwd()
 
-            video_tmp = os.path.join(cache_dir, "video.tmp")
-            audio_tmp = os.path.join(cache_dir, "audio.tmp")
+            video_tmp = os.path.join(cache_dir, "video.tmp.mp4")
+            audio_tmp = os.path.join(cache_dir, "audio.tmp.m4a")
 
             for tmp in [video_tmp, audio_tmp]:
                 if os.path.exists(tmp):
