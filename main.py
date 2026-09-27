@@ -1,4 +1,5 @@
 import os
+import re
 import threading
 
 from kivy.app import App
@@ -27,7 +28,6 @@ SUBTEXT_COLOR = get_color_from_hex('#9AA0AC')
 
 
 class YTDLogger:
-    """Custom logger to prevent output stream crashes on Android"""
     def debug(self, msg): pass
     def info(self, msg): pass
     def warning(self, msg): pass
@@ -94,7 +94,7 @@ class YTDownloaderApp(App):
                                 background_color=BTN_FETCH_COLOR, color=TEXT_COLOR, size_hint=(1, None), height=46)
         self.fetch_btn.bind(on_press=self.start_fetch_formats)
         
-        self.quality_spinner = Spinner(text='-- Select Format --', values=(), size_hint=(1, None), height=44,
+        self.quality_spinner = Spinner(text='-- Select Quality --', values=(), size_hint=(1, None), height=44,
                                        background_normal='', background_color=(0.14, 0.16, 0.22, 1), color=TEXT_COLOR)
         
         self.download_btn = RoundedButton(text='2. Download Now', font_size='15sp', bold=True, size_hint=(1, None), height=48, disabled=True)
@@ -147,31 +147,53 @@ class YTDownloaderApp(App):
                 formats = info.get('formats', [])
                 options = {}
                 
-                # استخراج أفضل مسار صوتي
+                # 1. تحديد أفضل مسار صوتي من نوع m4a أو أفضل صوت متاح
                 audio_formats = [f for f in formats if f.get('vcodec') == 'none' and f.get('acodec') != 'none']
-                best_audio_id = audio_formats[-1]['format_id'] if audio_formats else None
+                audio_formats.sort(key=lambda x: x.get('tbr') or x.get('abr') or 0)
+                
+                m4a_audio = [f for f in audio_formats if f.get('ext') == 'm4a']
+                best_audio = m4a_audio[-1] if m4a_audio else (audio_formats[-1] if audio_formats else None)
+                best_audio_id = best_audio['format_id'] if best_audio else None
 
-                # تجميع الجودات وإقرانها بالصوت
+                # 2. تصفية مسارات الفيديو وحفظ أفضل مسار لكل دقة (1080p, 720p, ...)
+                height_map = {}
                 for f in formats:
                     vcodec = f.get('vcodec')
+                    height = f.get('height')
+                    if vcodec != 'none' and height and isinstance(height, int):
+                        if height not in height_map:
+                            height_map[height] = f
+                        else:
+                            curr = height_map[height]
+                            # إعطاء أولوية لصيغة mp4 أو معدل نقل البت الأعلى
+                            if (f.get('ext') == 'mp4' and curr.get('ext') != 'mp4') or ((f.get('tbr') or 0) > (curr.get('tbr') or 0)):
+                                height_map[height] = f
+
+                # 3. ترتيب الجودات تنازلياً وإنشاء التسميات النظيفة
+                sorted_heights = sorted(height_map.keys(), reverse=True)
+                for h in sorted_heights:
+                    f = height_map[h]
                     acodec = f.get('acodec')
                     format_id = f.get('format_id')
-                    height = f.get('height')
+                    
+                    label = f"{h}p"
+                    if h >= 1080: label += " (Full HD)"
+                    elif h >= 720: label += " (HD)"
 
-                    if vcodec != 'none':
-                        if height:
-                            label = f"{height}p"
-                            if acodec != 'none':
-                                options[f"{label} (Ready)"] = (format_id, None)
-                            elif best_audio_id:
-                                options[label] = (format_id, best_audio_id)
+                    if acodec != 'none':
+                        options[label] = (format_id, None)
+                    elif best_audio_id:
+                        options[label] = (format_id, best_audio_id)
+
+                if best_audio_id:
+                    options["Audio Only (M4A)"] = (None, best_audio_id)
 
                 def _update_spinner(dt):
                     self.format_map = options
                     self.quality_spinner.values = list(options.keys())
                     if self.quality_spinner.values:
-                        self.quality_spinner.text = self.quality_spinner.values[-1]
-                    self.set_status('Qualities loaded. Select format and tap Download.')
+                        self.quality_spinner.text = self.quality_spinner.values[0]
+                    self.set_status('Qualities loaded. Select quality and tap Download.')
                     self.fetch_btn.disabled = False
                     self.download_btn.disabled = False
 
@@ -187,7 +209,7 @@ class YTDownloaderApp(App):
             self.set_status('Please select a valid quality option.')
             return
 
-        format_tuple = self.format_map[selected_text] # (video_id, audio_id)
+        format_tuple = self.format_map[selected_text]
         self.progress_bar.value = 0
         self.set_status('Preparing download...')
         self.download_btn.disabled = True
@@ -221,39 +243,42 @@ class YTDownloaderApp(App):
 
     def progress_hook(self, d):
         if d.get('status') == 'downloading':
-            percent_str = (d.get('_percent_str') or '').strip().replace('%', '')
+            raw_percent = d.get('_percent_str', '')
+            clean_percent = re.sub(r'\x1b\[[0-9;]*m', '', raw_percent).replace('%', '').strip()
             try:
-                percent = float(percent_str)
+                percent = float(clean_percent)
             except ValueError:
                 percent = None
-            speed = (d.get('_speed_str') or '').strip()
+            
+            raw_speed = d.get('_speed_str', '')
+            speed = re.sub(r'\x1b\[[0-9;]*m', '', raw_speed).strip()
             
             def _update(dt):
                 if percent is not None:
                     self.progress_bar.value = percent
-                self.set_status(f'Downloading... {percent_str}% | {speed}')
+                self.set_status(f'Downloading... {clean_percent}% | {speed}')
             Clock.schedule_once(_update)
             
         elif d.get('status') == 'finished':
-            Clock.schedule_once(lambda dt: self.set_status('Download finished. Processing...'))
+            Clock.schedule_once(lambda dt: self.set_status('Stream downloaded. Processing...'))
 
     def download_video(self, url, format_tuple):
         try:
             video_id, audio_id = format_tuple
             save_dir = self.get_save_directory()
             
-            # استخراج عنوان الفيديو للتسمية
-            with yt_dlp.YoutubeDL({'quiet': True, 'logger': YTDLogger()}) as ydl:
+            with yt_dlp.YoutubeDL({'quiet': True, 'logger': YTDLogger(), 'nocheckcertificate': True}) as ydl:
                 info = ydl.extract_info(url, download=False)
-                safe_title = info.get('title', 'Video').replace('/', '_').replace('\\', '_')
+                raw_title = info.get('title', 'Video')
+                safe_title = "".join([c for c in raw_title if c.isalnum() or c in (' ', '_', '-')]).rstrip()
+                if not safe_title: safe_title = "Video"
             
-            final_path = os.path.join(save_dir, f"{safe_title}.mp4")
-
-            # إذا كان الملف لا يحتاج لدمج (يحتوي على فيديو وصوت معاً)
-            if audio_id is None:
+            # خيار تحميل الصوت فقط
+            if video_id is None and audio_id is not None:
+                final_path = os.path.join(save_dir, f"{safe_title}.m4a")
                 ydl_opts = {
-                    'format': video_id, 'outtmpl': final_path, 'quiet': True,
-                    'logger': YTDLogger(), 'progress_hooks': [self.progress_hook]
+                    'format': audio_id, 'outtmpl': final_path, 'quiet': True,
+                    'logger': YTDLogger(), 'nocheckcertificate': True, 'progress_hooks': [self.progress_hook]
                 }
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
@@ -261,34 +286,48 @@ class YTDownloaderApp(App):
                 Clock.schedule_once(lambda dt: self.finish_success())
                 return
 
-            # إذا كان يحتاج لدمج باستخدام Media3
+            final_path = os.path.join(save_dir, f"{safe_title}.mp4")
+
+            # ملف فيديو وصوت جاهز مسبقاً بدون دمج
+            if audio_id is None:
+                ydl_opts = {
+                    'format': video_id, 'outtmpl': final_path, 'quiet': True,
+                    'logger': YTDLogger(), 'nocheckcertificate': True, 'progress_hooks': [self.progress_hook]
+                }
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+                self.scan_file_to_gallery(final_path)
+                Clock.schedule_once(lambda dt: self.finish_success())
+                return
+
+            # فيديو وصوت منفصلان (تحميل مؤقت ثم الدمج بـ Media3)
             if platform == 'android':
                 from jnius import autoclass
                 PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 cache_dir = PythonActivity.mActivity.getExternalCacheDir().getAbsolutePath()
             else:
-                cache_dir = os.getcwd() 
+                cache_dir = os.getcwd()
 
             video_tmp = os.path.join(cache_dir, "video.tmp")
             audio_tmp = os.path.join(cache_dir, "audio.tmp")
 
             for tmp in [video_tmp, audio_tmp]:
-                if os.path.exists(tmp): os.remove(tmp)
+                if os.path.exists(tmp):
+                    try: os.remove(tmp)
+                    except Exception: pass
 
-            # تنزيل الفيديو
-            Clock.schedule_once(lambda dt: self.set_status('Downloading Video...'))
-            with yt_dlp.YoutubeDL({'format': video_id, 'outtmpl': video_tmp, 'quiet': True, 'logger': YTDLogger(), 'progress_hooks': [self.progress_hook]}):
+            Clock.schedule_once(lambda dt: self.set_status('Downloading Video stream...'))
+            with yt_dlp.YoutubeDL({'format': video_id, 'outtmpl': video_tmp, 'quiet': True, 'nocheckcertificate': True, 'logger': YTDLogger(), 'progress_hooks': [self.progress_hook]}) as ydl:
                 ydl.download([url])
 
-            # تنزيل الصوت
-            Clock.schedule_once(lambda dt: self.set_status('Downloading Audio...'))
-            with yt_dlp.YoutubeDL({'format': audio_id, 'outtmpl': audio_tmp, 'quiet': True, 'logger': YTDLogger()}):
+            Clock.schedule_once(lambda dt: self.set_status('Downloading Audio stream...'))
+            with yt_dlp.YoutubeDL({'format': audio_id, 'outtmpl': audio_tmp, 'quiet': True, 'nocheckcertificate': True, 'logger': YTDLogger()}) as ydl:
                 ydl.download([url])
 
-            # عملية الدمج باستخدام Java
             Clock.schedule_once(lambda dt: self.set_status('Merging with Media3... (Please wait)'))
             
             if platform == 'android':
+                from jnius import autoclass
                 MediaMerger = autoclass('org.myapp.MediaMerger')
                 merger = MediaMerger()
                 result = merger.mergeBlocking(PythonActivity.mActivity, video_tmp, audio_tmp, final_path)
@@ -297,16 +336,17 @@ class YTDownloaderApp(App):
                     self.scan_file_to_gallery(final_path)
                     Clock.schedule_once(lambda dt: self.finish_success())
                 else:
-                    Clock.schedule_once(lambda dt: self.finish_error(f'Merge Error: {result}'))
+                    Clock.schedule_once(lambda dt, r=result: self.finish_error(f'Merge Error: {r}'))
             else:
                 Clock.schedule_once(lambda dt: self.finish_error("Merging is only supported on Android devices."))
 
-            # تنظيف الملفات المؤقتة
             for tmp in [video_tmp, audio_tmp]:
-                if os.path.exists(tmp): os.remove(tmp)
+                if os.path.exists(tmp):
+                    try: os.remove(tmp)
+                    except Exception: pass
 
         except Exception as e:
-            Clock.schedule_once(lambda dt: self.finish_error(str(e)))
+            Clock.schedule_once(lambda dt, err=str(e): self.finish_error(err))
 
     def set_status(self, text):
         self.status_label.text = text
