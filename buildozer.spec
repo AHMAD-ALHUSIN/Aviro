@@ -32,6 +32,8 @@ android.add_src = %(source.dir)s/src/java
 android.gradle_dependencies = androidx.media3:media3-transformer:1.3.0, androidx.media3:media3-common:1.3.0
 android.enable_androidx = True
 
+android.proguard_rules = proguard-rules.pro
+
 [buildozer]
 log_level = 2
 warn_on_root = 1
