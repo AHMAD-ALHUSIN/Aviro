@@ -7,14 +7,11 @@ from jnius import autoclass
 from oscpy.client import OSCClient
 from oscpy.server import OSCThreadServer
 
-import yt_dlp
-
 HOST = '127.0.0.1'
-SERVICE_PORT = 3001   # الخدمة تستمع هنا
-APP_PORT = 3002       # التطبيق يستمع هنا
-IDLE_TIMEOUT = 60     # تتوقف الخدمة إذا لم يصلها عمل خلال 60 ثانية
+SERVICE_PORT = 3001
+APP_PORT = 3002
+IDLE_TIMEOUT = 60
 
-# كلاسات جافا تُحمَّل هنا (خيط الخدمة الرئيسي) لأن ClassLoader يرى كلاسات التطبيق هنا فقط
 PythonService = autoclass('org.kivy.android.PythonService')
 Environment = autoclass('android.os.Environment')
 MediaScannerConnection = autoclass('android.media.MediaScannerConnection')
@@ -38,14 +35,12 @@ state = {
     'stop_at': 0,
 }
 
-
 class YTDLogger:
     def debug(self, msg): pass
     def info(self, msg): pass
     def warning(self, msg): pass
     def error(self, msg): pass
     def write(self, msg): pass
-
 
 # ------------------------------------------------------------------ helpers
 def send(path, *args):
@@ -54,12 +49,10 @@ def send(path, *args):
     except Exception as e:
         print('OSC send failed:', e)
 
-
 def report(percent, text):
     state['percent'] = float(percent)
     state['text'] = text
     send(b'/progress', float(percent), text)
-
 
 def fmt_speed(bps):
     if not bps:
@@ -70,7 +63,6 @@ def fmt_speed(bps):
         bps /= 1024
     return f'{bps:.1f} GB/s'
 
-
 def get_save_dir():
     try:
         d = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -79,7 +71,6 @@ def get_save_dir():
     except Exception:
         pass
     return '/storage/emulated/0/Download'
-
 
 def get_cache_dir():
     try:
@@ -90,11 +81,9 @@ def get_cache_dir():
     except Exception:
         return '/data/local/tmp'
 
-
 def clean_title(raw):
     title = ''.join(c for c in (raw or '') if c.isalnum() or c in (' ', '_', '-')).strip()
     return (title[:100].strip()) or 'Video'
-
 
 def unique_path(folder, title, ext):
     path = os.path.join(folder, f'{title}.{ext}')
@@ -104,7 +93,6 @@ def unique_path(folder, title, ext):
         n += 1
     return path
 
-
 def remove_quiet(*paths):
     for p in paths:
         try:
@@ -113,30 +101,29 @@ def remove_quiet(*paths):
         except Exception:
             pass
 
-
 def scan_file(path):
     try:
         MediaScannerConnection.scanFile(service, [path], None, None)
     except Exception:
         pass
 
-
 def make_hook(lo, hi, label):
-    """Progress hook يحوّل تقدم المرحلة إلى نسبة من (lo..hi) من الإجمالي."""
-    last = [0.0]
+    """تم تحسينه لتقليل الضغط على واجهة المستخدم عبر OSC"""
+    import yt_dlp # استدعاء هنا لتجنب البطء
+    last_time = [0.0]
+    last_percent = [0]
 
     def hook(d):
         if state['cancel']:
             raise yt_dlp.utils.DownloadCancelled()
         if d.get('status') != 'downloading':
             return
+        
         now = time.time()
-        if now - last[0] < 0.3:
-            return
-        last[0] = now
-
+        
         total = d.get('total_bytes') or d.get('total_bytes_estimate')
         done = d.get('downloaded_bytes') or 0
+        
         if total:
             frac = min(done / total, 1.0)
         elif d.get('fragment_count'):
@@ -144,16 +131,24 @@ def make_hook(lo, hi, label):
         else:
             frac = 0.0
 
-        speed = fmt_speed(d.get('speed'))
-        text = f'{label} {frac * 100:.0f}%'
-        if speed:
-            text += f' | {speed}'
-        report(lo + (hi - lo) * frac, text)
+        current_percent = int(frac * 100)
+        
+        # أرسل التحديث فقط إذا تغيرت النسبة بـ 1% أو مر نصف ثانية (يمنع تجميد التطبيق)
+        if current_percent > last_percent[0] or (now - last_time[0] > 0.5):
+            last_percent[0] = current_percent
+            last_time[0] = now
+            
+            speed = fmt_speed(d.get('speed'))
+            text = f'{label} {current_percent}%'
+            if speed:
+                text += f' | {speed}'
+                
+            report(lo + (hi - lo) * frac, text)
 
     return hook
 
-
 def download_stream(url, fmt, out_path, hook):
+    import yt_dlp # استدعاء ديناميكي لتسريع فتح التطبيق
     opts = {
         'format': fmt,
         'outtmpl': out_path,
@@ -164,15 +159,18 @@ def download_stream(url, fmt, out_path, hook):
         'nocheckcertificate': True,
         'retries': 10,
         'fragment_retries': 10,
+        # الإضافات السحرية لتسريع التحميل وتخطي قيود يوتيوب
+        'concurrent_fragment_downloads': 5, # تحميل 5 أجزاء في نفس الوقت
+        'http_chunk_size': 10485760,        # تحميل أجزاء بحجم 10 ميجا
         'socket_timeout': 30,
         'progress_hooks': [hook],
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
 
-
 # ------------------------------------------------------------------ main job
 def run_job(job):
+    import yt_dlp # استدعاء ديناميكي
     state['busy'] = True
     state['cancel'] = False
     final_path = None
@@ -190,17 +188,14 @@ def run_job(job):
         report(0, 'Starting...')
 
         if video_id is None and audio_id is not None:
-            # صوت فقط
             final_path = unique_path(save_dir, title, 'm4a')
             download_stream(url, audio_id, final_path, make_hook(0, 100, 'Downloading audio'))
 
         elif audio_id is None:
-            # ملف جاهز (فيديو + صوت) بدون دمج
             final_path = unique_path(save_dir, title, 'mp4')
             download_stream(url, video_id, final_path, make_hook(0, 100, 'Downloading'))
 
         else:
-            # فيديو وصوت منفصلان: تنزيل مؤقت ثم دمج بـ Media3
             if MediaMerger is None:
                 raise RuntimeError(f'MediaMerger not loaded: {MERGER_ERROR}')
 
@@ -215,6 +210,7 @@ def run_job(job):
             download_stream(url, audio_id, audio_tmp, make_hook(75, 95, 'Downloading audio'))
 
             report(95, 'Merging... (Please wait)')
+            # سيتم الدمج بسرعة إذا كانت الملفات mp4 و m4a
             result = MediaMerger().mergeBlocking(service, video_tmp, audio_tmp, final_path)
             if result != 'SUCCESS':
                 raise RuntimeError(f'Merge Error: {result}')
@@ -238,7 +234,7 @@ def run_job(job):
         state['busy'] = False
         state['cancel'] = False
         state['last_activity'] = time.time()
-        state['stop_at'] = time.time() + 2   # توقف الخدمة بعد ثانيتين من الانتهاء
+        state['stop_at'] = time.time() + 2
 
 
 # ------------------------------------------------------------------ OSC handlers
@@ -255,26 +251,20 @@ def on_download(payload):
     state['stop_at'] = 0
     threading.Thread(target=run_job, args=(job,), daemon=True).start()
 
-
 def on_cancel(*_):
-    # لا يمكن الإلغاء أثناء الدمج
     if state['busy'] and state['percent'] < 95:
         state['cancel'] = True
 
-
 def on_sync(*_):
-    """يستدعيها التطبيق عند فتحه ليعرف حالة الخدمة."""
     state['last_activity'] = time.time()
     send(b'/ready', 1)
     send(b'/state', 1 if state['busy'] else 0, float(state['percent']), state['text'])
-
 
 def stop_service():
     try:
         service.stopSelf()
     except Exception as e:
         print('stopSelf failed:', e)
-
 
 # ------------------------------------------------------------------ start
 server = OSCThreadServer(encoding='utf8')
