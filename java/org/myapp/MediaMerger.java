@@ -5,153 +5,224 @@ import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
+import android.os.Build;
+
 import java.io.File;
 import java.nio.ByteBuffer;
 
 public class MediaMerger {
 
-    public String mergeBlocking(final Context context, final String videoPath, final String audioPath, final String outputPath) {
+    private static final int INITIAL_BUFFER_SIZE = 2 * 1024 * 1024; // 2MB (يكفي لمعظم إطارات 4K)
+    private static final int PROGRESS_EVERY_N_SAMPLES = 64;
+
+    private volatile boolean cancelled = false;
+    private volatile int progress = 0;
+
+    /** يُستدعى من بايثون لإلغاء الدمج الجاري. */
+    public void cancel() {
+        cancelled = true;
+    }
+
+    /** نسبة تقدم الدمج 0..100 (يُستدعى من بايثون بشكل دوري). */
+    public int getProgress() {
+        return progress;
+    }
+
+    public String mergeBlocking(final Context context, final String videoPath,
+                                final String audioPath, final String outputPath) {
+        cancelled = false;
+        progress = 0;
+
         MediaExtractor videoExtractor = null;
         MediaExtractor audioExtractor = null;
         MediaMuxer muxer = null;
+        boolean muxerStarted = false;
+        boolean muxerStopped = false;
+        boolean success = false;
 
         try {
             File outFile = new File(outputPath);
-            if (outFile.getParentFile() != null && !outFile.getParentFile().exists()) {
-                outFile.getParentFile().mkdirs();
+            File parent = outFile.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
             }
             if (outFile.exists()) {
                 outFile.delete();
             }
 
-            // 1. إعداد مسار الفيديو
+            // 1. مسار الفيديو
             videoExtractor = new MediaExtractor();
             videoExtractor.setDataSource(videoPath);
-            int videoTrackIndex = -1;
-            MediaFormat videoFormat = null;
-
-            for (int i = 0; i < videoExtractor.getTrackCount(); i++) {
-                MediaFormat format = videoExtractor.getTrackFormat(i);
-                String mime = format.getString(MediaFormat.KEY_MIME);
-                if (mime != null && mime.startsWith("video/")) {
-                    videoTrackIndex = i;
-                    videoFormat = format;
-                    break;
-                }
-            }
-
-            if (videoTrackIndex == -1) {
+            int videoTrackIndex = findTrack(videoExtractor, "video/");
+            if (videoTrackIndex < 0) {
                 return "Error: No video track found in " + videoPath;
             }
+            MediaFormat videoFormat = videoExtractor.getTrackFormat(videoTrackIndex);
 
-            // 2. إعداد مسار الصوت
+            // 2. مسار الصوت
             audioExtractor = new MediaExtractor();
             audioExtractor.setDataSource(audioPath);
-            int audioTrackIndex = -1;
-            MediaFormat audioFormat = null;
-
-            for (int i = 0; i < audioExtractor.getTrackCount(); i++) {
-                MediaFormat format = audioExtractor.getTrackFormat(i);
-                String mime = format.getString(MediaFormat.KEY_MIME);
-                if (mime != null && mime.startsWith("audio/")) {
-                    audioTrackIndex = i;
-                    audioFormat = format;
-                    break;
-                }
-            }
-
-            if (audioTrackIndex == -1) {
+            int audioTrackIndex = findTrack(audioExtractor, "audio/");
+            if (audioTrackIndex < 0) {
                 return "Error: No audio track found in " + audioPath;
             }
+            MediaFormat audioFormat = audioExtractor.getTrackFormat(audioTrackIndex);
 
-            // 3. إنشاء المدمج (Muxer)
+            // 3. إنشاء الـ Muxer
             muxer = new MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
 
-            videoExtractor.selectTrack(videoTrackIndex);
-            int muxerVideoTrack = muxer.addTrack(videoFormat);
+            // الحفاظ على دوران الفيديو (مقاطع الموبايل العمودية)
+            if (Build.VERSION.SDK_INT >= 23 && videoFormat.containsKey(MediaFormat.KEY_ROTATION)) {
+                try {
+                    muxer.setOrientationHint(videoFormat.getInteger(MediaFormat.KEY_ROTATION));
+                } catch (Exception ignored) {
+                }
+            }
 
+            int muxerVideoTrack;
+            int muxerAudioTrack;
+            try {
+                muxerVideoTrack = muxer.addTrack(videoFormat);
+                muxerAudioTrack = muxer.addTrack(audioFormat);
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                return "Unsupported codec for MP4 on this device: video="
+                        + videoFormat.getString(MediaFormat.KEY_MIME)
+                        + ", audio=" + audioFormat.getString(MediaFormat.KEY_MIME)
+                        + " (" + e + ")";
+            }
+
+            videoExtractor.selectTrack(videoTrackIndex);
             audioExtractor.selectTrack(audioTrackIndex);
-            int muxerAudioTrack = muxer.addTrack(audioFormat);
+
+            long duration = Math.max(getDuration(videoFormat), getDuration(audioFormat));
 
             muxer.start();
+            muxerStarted = true;
 
-            // 🌟 تحسين 1: حساب الحجم الأقصى للـ Buffer ديناميكياً بدلاً من تثبيته
-            int maxBufferSize = 256 * 1024; // قيمة مبدئية
-            if (videoFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
-                maxBufferSize = Math.max(maxBufferSize, videoFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE));
-            }
-            if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
-                maxBufferSize = Math.max(maxBufferSize, audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE));
-            }
+            // 4. حجم الـ Buffer: ابدأ بقيمة مناسبة ثم كبّره تلقائياً عند الحاجة
+            int bufferSize = INITIAL_BUFFER_SIZE;
+            bufferSize = Math.max(bufferSize, getIntSafe(videoFormat, MediaFormat.KEY_MAX_INPUT_SIZE));
+            bufferSize = Math.max(bufferSize, getIntSafe(audioFormat, MediaFormat.KEY_MAX_INPUT_SIZE));
+            ByteBuffer buffer = ByteBuffer.allocateDirect(bufferSize);
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
 
-            // تخصيص الذاكرة بناءً على أكبر إطار متوقع
-            ByteBuffer buffer = ByteBuffer.allocateDirect(maxBufferSize);
-            MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
+            // 5. دمج متداخل زمنياً (Interleaving) مع تخزين أوقات العيّنات لتقليل استدعاءات JNI
+            long videoTime = videoExtractor.getSampleTime();
+            long audioTime = audioExtractor.getSampleTime();
+            int counter = 0;
 
-            // 5. الدمج المتداخل زمنيًا (Interleaving)
-            boolean hasVideo = true;
-            boolean hasAudio = true;
-
-            while (hasVideo || hasAudio) {
-                long videoTime = hasVideo ? videoExtractor.getSampleTime() : -1;
-                if (videoTime < 0) hasVideo = false;
-
-                long audioTime = hasAudio ? audioExtractor.getSampleTime() : -1;
-                if (audioTime < 0) hasAudio = false;
-
-                if (!hasVideo && !hasAudio) break;
-
-                boolean writeVideo;
-                if (hasVideo && hasAudio) {
-                    writeVideo = (videoTime <= audioTime);
-                } else {
-                    writeVideo = hasVideo;
+            while (videoTime >= 0 || audioTime >= 0) {
+                if (cancelled) {
+                    return "CANCELLED";
                 }
 
-                // 🌟 تحسين 2: تصفير الـ Buffer قبل كل قراءة لتجنب تداخل البيانات
-                buffer.clear(); 
+                boolean writeVideo = videoTime >= 0 && (audioTime < 0 || videoTime <= audioTime);
+                MediaExtractor extractor = writeVideo ? videoExtractor : audioExtractor;
+                int track = writeVideo ? muxerVideoTrack : muxerAudioTrack;
+                long sampleTime = writeVideo ? videoTime : audioTime;
 
-                if (writeVideo) {
-                    bufferInfo.offset = 0;
-                    bufferInfo.size = videoExtractor.readSampleData(buffer, 0);
-                    if (bufferInfo.size < 0) {
-                        hasVideo = false;
-                    } else {
-                        bufferInfo.presentationTimeUs = videoTime;
-                        bufferInfo.flags = videoExtractor.getSampleFlags();
-                        muxer.writeSampleData(muxerVideoTrack, buffer, bufferInfo);
-                        videoExtractor.advance();
-                    }
-                } else {
-                    bufferInfo.offset = 0;
-                    bufferInfo.size = audioExtractor.readSampleData(buffer, 0);
-                    if (bufferInfo.size < 0) {
-                        hasAudio = false;
-                    } else {
-                        bufferInfo.presentationTimeUs = audioTime;
-                        bufferInfo.flags = audioExtractor.getSampleFlags();
-                        muxer.writeSampleData(muxerAudioTrack, buffer, bufferInfo);
-                        audioExtractor.advance();
-                    }
+                // تكبير الـ Buffer إذا كانت العيّنة الحالية أكبر منه
+                long sampleSize = extractor.getSampleSize();
+                if (sampleSize > buffer.capacity()) {
+                    int newSize = (int) Math.max(sampleSize + 65536L, (long) buffer.capacity() * 2L);
+                    buffer = ByteBuffer.allocateDirect(newSize);
+                }
+
+                buffer.clear();
+                int size = extractor.readSampleData(buffer, 0);
+                if (size < 0) {
+                    if (writeVideo) videoTime = -1; else audioTime = -1;
+                    continue;
+                }
+
+                int extractorFlags = extractor.getSampleFlags();
+                int flags = (extractorFlags & MediaExtractor.SAMPLE_FLAG_SYNC) != 0
+                        ? MediaCodec.BUFFER_FLAG_KEY_FRAME : 0;
+
+                info.set(0, size, sampleTime, flags);
+                muxer.writeSampleData(track, buffer, info);
+
+                extractor.advance();
+                long next = extractor.getSampleTime();
+                if (writeVideo) videoTime = next; else audioTime = next;
+
+                if (duration > 0 && (++counter % PROGRESS_EVERY_N_SAMPLES) == 0) {
+                    int p = (int) Math.min(99L, sampleTime * 100L / duration);
+                    if (p > progress) progress = p;
                 }
             }
 
+            // 6. إنهاء الملف: أي فشل هنا يُعاد كخطأ حقيقي (وليس SUCCESS)
+            try {
+                muxer.stop();
+                muxerStopped = true;
+            } catch (Exception e) {
+                return "Muxer stop failed: " + e;
+            }
+
+            progress = 100;
+            success = true;
             return "SUCCESS";
 
-        } catch (Exception e) {
-            return "Exception: " + e.getMessage();
+        } catch (Throwable t) {
+            return "Exception: " + t;
         } finally {
-            // إغلاق الموارد بشكل آمن
             try {
                 if (videoExtractor != null) videoExtractor.release();
+            } catch (Exception ignored) {
+            }
+            try {
                 if (audioExtractor != null) audioExtractor.release();
-                if (muxer != null) {
+            } catch (Exception ignored) {
+            }
+            if (muxer != null) {
+                if (muxerStarted && !muxerStopped) {
                     try {
                         muxer.stop();
-                    } catch (Exception ignored) {}
-                    muxer.release();
+                    } catch (Exception ignored) {
+                    }
                 }
-            } catch (Exception ignored) {}
+                try {
+                    muxer.release();
+                } catch (Exception ignored) {
+                }
+            }
+            if (!success) {
+                try {
+                    new File(outputPath).delete();
+                } catch (Exception ignored) {
+                }
+            }
         }
+    }
+
+    private static int findTrack(MediaExtractor extractor, String mimePrefix) {
+        for (int i = 0; i < extractor.getTrackCount(); i++) {
+            String mime = extractor.getTrackFormat(i).getString(MediaFormat.KEY_MIME);
+            if (mime != null && mime.startsWith(mimePrefix)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static long getDuration(MediaFormat format) {
+        try {
+            if (format.containsKey(MediaFormat.KEY_DURATION)) {
+                return format.getLong(MediaFormat.KEY_DURATION);
+            }
+        } catch (Exception ignored) {
+        }
+        return 0L;
+    }
+
+    private static int getIntSafe(MediaFormat format, String key) {
+        try {
+            if (format.containsKey(key)) {
+                return format.getInteger(key);
+            }
+        } catch (Exception ignored) {
+        }
+        return 0;
     }
 }
