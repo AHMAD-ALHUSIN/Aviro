@@ -1,3 +1,4 @@
+import os  
 import re
 import json
 import threading
@@ -20,6 +21,13 @@ from kivy.utils import platform, get_color_from_hex
 from oscpy.client import OSCClient
 from oscpy.server import OSCThreadServer
 
+
+try:
+    import certifi
+    os.environ.setdefault('SSL_CERT_FILE', certifi.where())
+except Exception:
+    pass
+
 # استيراد yt_dlp ثقيل (آلاف الملفات)، لذلك يُحمَّل في الخلفية بعد ظهور الواجهة
 yt_dlp = None
 
@@ -30,7 +38,6 @@ def load_yt_dlp():
         import yt_dlp as _yt_dlp
         yt_dlp = _yt_dlp
     return yt_dlp
-
 
 # --- IPC with the download service ---
 HOST = '127.0.0.1'
