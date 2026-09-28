@@ -351,7 +351,7 @@ class YTDownloaderApp(App):
                 extractor = (info.get('extractor_key') or info.get('extractor') or '').lower()
                 is_youtube = 'youtube' in extractor or 'youtu' in url.lower()
 
-                # 1. تحديد أفضل مسار صوتي من نوع m4a (AAC)
+                # 1. تحديد أفضل مسار صوتي بصيغة m4a (AAC) متوافق مع Android MediaMuxer
                 audio_formats = [f for f in formats if f.get('vcodec') == 'none' and f.get('acodec') != 'none']
                 audio_formats.sort(key=lambda x: x.get('tbr') or x.get('abr') or 0)
 
@@ -359,19 +359,19 @@ class YTDownloaderApp(App):
                 best_audio = m4a_audio[-1] if m4a_audio else (audio_formats[-1] if audio_formats else None)
                 best_audio_id = best_audio['format_id'] if best_audio else None
 
-                # 2. تصفية الفيديوهات
+                # 2. تصفية مسارات الفيديو
                 height_map = {}
                 for f in formats:
                     vcodec = str(f.get('vcodec', '')).lower()
-                    acodec = f.get('acodec')
+                    acodec = str(f.get('acodec', '')).lower()
                     height = f.get('height')
 
                     if vcodec != 'none' and height and isinstance(height, int):
-                        # غير يوتيوب: نتجاهل الفيديو بدون صوت
+                        # غير يوتيوب: تجاهل الفيديو بدون صوت
                         if not is_youtube and acodec == 'none':
                             continue
 
-                        # إذا كان الفيديو بدون صوت (يحتاج دمج)، نضمن أنه بترخيص H.264 (avc1) فقط المتوافق مع أندرويد
+                        # تصفية المهمة: لو كان الفيديو بدون صوت، نضمن أنه بترخيص H.264 (avc1) المتوافق فقط
                         if acodec == 'none' and not (vcodec.startswith('avc') or vcodec.startswith('h264')):
                             continue
 
@@ -379,10 +379,10 @@ class YTDownloaderApp(App):
                             height_map[height] = f
                         else:
                             curr = height_map[height]
-                            # إعطاء أولوية للملفات التي تحتوي على صوت جاهز (تتجنب الدمج) أو mp4
                             curr_has_audio = curr.get('acodec') != 'none'
                             f_has_audio = acodec != 'none'
 
+                            # إعطاء أولوية للملف المدمج جاهزاً لتجنب الدمج نهائياً في الجودات المنخفضة (144p/360p)
                             if f_has_audio and not curr_has_audio:
                                 height_map[height] = f
                             elif f.get('ext') == 'mp4' and curr.get('ext') != 'mp4':
@@ -390,7 +390,7 @@ class YTDownloaderApp(App):
                             elif (f.get('tbr') or 0) > (curr.get('tbr') or 0):
                                 height_map[height] = f
 
-                # 3. ترتيب الجودات وتحديد هل تحتاج دمج أم لا
+                # 3. ترتيب الجودات وإنشاء الخيارات
                 sorted_heights = sorted(height_map.keys(), reverse=True)
                 for h in sorted_heights:
                     f = height_map[h]
@@ -401,7 +401,7 @@ class YTDownloaderApp(App):
                     if h >= 1080: label += " (Full HD)"
                     elif h >= 720: label += " (HD)"
 
-                    # إذا كان الفيديو يحتوي على صوت بالفعل، لا نرسل audio_id (لا يوجد دمج)
+                    # إذا كان الملف يحتوي على صوت وصورة معاً، نلغي معرف الصوت لتجاوز عملية الدمج
                     if acodec != 'none':
                         options[label] = (format_id, None)
                     elif best_audio_id and is_youtube:
