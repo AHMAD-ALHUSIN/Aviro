@@ -13,6 +13,7 @@ import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
 import java.io.File;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class MediaMerger {
 
@@ -25,8 +26,11 @@ public class MediaMerger {
             if (outFile.getParentFile() != null && !outFile.getParentFile().exists()) {
                 outFile.getParentFile().mkdirs();
             }
+            if (outFile.exists()) {
+                outFile.delete();
+            }
 
-            // تشغيل Transformer داخل Main Looper لمنع توقف التطبيق
+            // تشغيل Transformer داخل Main Looper
             Handler mainHandler = new Handler(Looper.getMainLooper());
             mainHandler.post(new Runnable() {
                 @Override
@@ -64,7 +68,9 @@ public class MediaMerger {
                 }
             });
 
-            latch.await();
+            if (!latch.await(60, TimeUnit.MINUTES)) {
+                resultMsg[0] = "Merge timeout";
+            }
 
         } catch (Exception e) {
             resultMsg[0] = "Exception: " + e.getMessage();
