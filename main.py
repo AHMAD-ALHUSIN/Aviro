@@ -75,6 +75,11 @@ class YTDownloaderApp(App):
         Window.clearcolor = BG_COLOR
         self.format_map = {}
 
+        # كلاسات جافا تُحمَّل في الخيط الرئيسي فقط (انظر on_start)
+        self.PythonActivity = None
+        self.MediaMerger = None
+        self.merger_error = None
+
         root = BoxLayout(orientation='vertical', padding=[20, 20, 20, 20])
         root.add_widget(Widget(size_hint_y=1))
 
@@ -85,21 +90,21 @@ class YTDownloaderApp(App):
         root.add_widget(Widget(size_hint_y=None, height=14))
 
         card = Card(orientation='vertical', padding=20, spacing=14, size_hint=(1, None), height=290)
-        
+
         self.url_input = TextInput(hint_text='Paste URL here...', multiline=False, size_hint=(1, None), height=46,
                                    padding=[12, 11, 12, 11], background_color=(1, 1, 1, 0.06), foreground_color=TEXT_COLOR,
                                    hint_text_color=SUBTEXT_COLOR, cursor_color=ACCENT_COLOR)
-        
+
         self.fetch_btn = Button(text='1. Fetch Qualities', font_size='14sp', bold=True, background_normal='',
                                 background_color=BTN_FETCH_COLOR, color=TEXT_COLOR, size_hint=(1, None), height=46)
         self.fetch_btn.bind(on_press=self.start_fetch_formats)
-        
+
         self.quality_spinner = Spinner(text='-- Select Quality --', values=(), size_hint=(1, None), height=44,
                                        background_normal='', background_color=(0.14, 0.16, 0.22, 1), color=TEXT_COLOR)
-        
+
         self.download_btn = RoundedButton(text='2. Download Now', font_size='15sp', bold=True, size_hint=(1, None), height=48, disabled=True)
         self.download_btn.bind(on_press=self.start_download)
-        
+
         self.progress_bar = ProgressBar(max=100, value=0, size_hint=(1, None), height=8)
 
         card.add_widget(self.url_input)
@@ -111,13 +116,27 @@ class YTDownloaderApp(App):
 
         self.status_label = Label(text='Ready', font_size='13sp', color=SUBTEXT_COLOR, halign='center', valign='top', size_hint=(1, None), height=60)
         self.status_label.bind(size=lambda inst, size: setattr(inst, 'text_size', (size[0], None)))
-        
+
         root.add_widget(Widget(size_hint_y=None, height=10))
         root.add_widget(self.status_label)
         root.add_widget(Widget(size_hint_y=1))
 
         self.request_permissions()
         return root
+
+    def on_start(self):
+        """تحميل كلاسات جافا في الخيط الرئيسي (هنا يرى الـ ClassLoader كلاسات التطبيق)."""
+        if platform != 'android':
+            return
+        try:
+            from jnius import autoclass
+            self.PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            self.MediaMerger = autoclass('org.myapp.MediaMerger')
+            print('MediaMerger loaded OK on main thread')
+        except Exception as e:
+            self.merger_error = str(e)
+            print('MediaMerger load FAILED:', e)
+            self.set_status(f'MediaMerger load failed:\n{e}')
 
     def request_permissions(self):
         if platform == 'android':
@@ -146,11 +165,11 @@ class YTDownloaderApp(App):
                 info = ydl.extract_info(url, download=False)
                 formats = info.get('formats', [])
                 options = {}
-                
+
                 # 1. تحديد أفضل مسار صوتي من نوع m4a أو أفضل صوت متاح
                 audio_formats = [f for f in formats if f.get('vcodec') == 'none' and f.get('acodec') != 'none']
                 audio_formats.sort(key=lambda x: x.get('tbr') or x.get('abr') or 0)
-                
+
                 m4a_audio = [f for f in audio_formats if f.get('ext') == 'm4a']
                 best_audio = m4a_audio[-1] if m4a_audio else (audio_formats[-1] if audio_formats else None)
                 best_audio_id = best_audio['format_id'] if best_audio else None
@@ -175,7 +194,7 @@ class YTDownloaderApp(App):
                     f = height_map[h]
                     acodec = f.get('acodec')
                     format_id = f.get('format_id')
-                    
+
                     label = f"{h}p"
                     if h >= 1080: label += " (Full HD)"
                     elif h >= 720: label += " (HD)"
@@ -199,7 +218,7 @@ class YTDownloaderApp(App):
 
                 Clock.schedule_once(_update_spinner)
         except Exception as e:
-            Clock.schedule_once(lambda dt: self.set_status(f'Error:\n{str(e)}'))
+            Clock.schedule_once(lambda dt, err=str(e): self.set_status(f'Error:\n{err}'))
             Clock.schedule_once(lambda dt: setattr(self.fetch_btn, 'disabled', False))
 
     def start_download(self, instance):
@@ -231,12 +250,11 @@ class YTDownloaderApp(App):
         return os.getcwd()
 
     def scan_file_to_gallery(self, file_path):
-        if platform == 'android':
+        if platform == 'android' and self.PythonActivity is not None:
             try:
                 from jnius import autoclass
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 MediaScannerConnection = autoclass('android.media.MediaScannerConnection')
-                context = PythonActivity.mActivity.getApplicationContext()
+                context = self.PythonActivity.mActivity.getApplicationContext()
                 MediaScannerConnection.scanFile(context, [file_path], None, None)
             except Exception:
                 pass
@@ -249,16 +267,16 @@ class YTDownloaderApp(App):
                 percent = float(clean_percent)
             except ValueError:
                 percent = None
-            
+
             raw_speed = d.get('_speed_str', '')
             speed = re.sub(r'\x1b\[[0-9;]*m', '', raw_speed).strip()
-            
+
             def _update(dt):
                 if percent is not None:
                     self.progress_bar.value = percent
                 self.set_status(f'Downloading... {clean_percent}% | {speed}')
             Clock.schedule_once(_update)
-            
+
         elif d.get('status') == 'finished':
             Clock.schedule_once(lambda dt: self.set_status('Stream downloaded. Processing...'))
 
@@ -266,13 +284,13 @@ class YTDownloaderApp(App):
         try:
             video_id, audio_id = format_tuple
             save_dir = self.get_save_directory()
-            
+
             with yt_dlp.YoutubeDL({'quiet': True, 'logger': YTDLogger(), 'nocheckcertificate': True}) as ydl:
                 info = ydl.extract_info(url, download=False)
                 raw_title = info.get('title', 'Video')
                 safe_title = "".join([c for c in raw_title if c.isalnum() or c in (' ', '_', '-')]).rstrip()
                 if not safe_title: safe_title = "Video"
-            
+
             # خيار تحميل الصوت فقط
             if video_id is None and audio_id is not None:
                 final_path = os.path.join(save_dir, f"{safe_title}.m4a")
@@ -302,9 +320,9 @@ class YTDownloaderApp(App):
 
             # فيديو وصوت منفصلان (تحميل مؤقت ثم الدمج بـ Media3)
             if platform == 'android':
-                from jnius import autoclass
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
-                cache_dir = PythonActivity.mActivity.getExternalCacheDir().getAbsolutePath()
+                if self.PythonActivity is None:
+                    raise RuntimeError(f'PythonActivity not loaded: {self.merger_error}')
+                cache_dir = self.PythonActivity.mActivity.getExternalCacheDir().getAbsolutePath()
             else:
                 cache_dir = os.getcwd()
 
@@ -325,13 +343,15 @@ class YTDownloaderApp(App):
                 ydl.download([url])
 
             Clock.schedule_once(lambda dt: self.set_status('Merging with Media3... (Please wait)'))
-            
+
             if platform == 'android':
-                from jnius import autoclass
-                MediaMerger = autoclass('org.myapp.MediaMerger')
-                merger = MediaMerger()
-                result = merger.mergeBlocking(PythonActivity.mActivity, video_tmp, audio_tmp, final_path)
-                
+                # نستخدم الكلاس المحمّل مسبقاً في الخيط الرئيسي (لا autoclass هنا)
+                if self.MediaMerger is None:
+                    raise RuntimeError(f'MediaMerger class was not loaded at startup: {self.merger_error}')
+
+                merger = self.MediaMerger()
+                result = merger.mergeBlocking(self.PythonActivity.mActivity, video_tmp, audio_tmp, final_path)
+
                 if result == "SUCCESS":
                     self.scan_file_to_gallery(final_path)
                     Clock.schedule_once(lambda dt: self.finish_success())
@@ -361,6 +381,7 @@ class YTDownloaderApp(App):
         self.set_status(f'Failed:\n{err}')
         self.download_btn.disabled = False
         self.fetch_btn.disabled = False
+
 
 if __name__ == '__main__':
     YTDownloaderApp().run()
