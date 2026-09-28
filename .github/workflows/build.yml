@@ -7,7 +7,6 @@ on:
 
 jobs:
   build:
-    # التغيير الهام: استخدام ubuntu-22.04 المضمون والمتوافق مع Buildozer و Python 3.11
     runs-on: ubuntu-22.04
 
     steps:
@@ -42,14 +41,46 @@ jobs:
             ls -lh ./ffmpeg
           fi
 
+      - name: Show repo layout and spec
+        run: |
+          echo "=== java folder ==="
+          find . -path ./.git -prune -o -ipath "*mediamerger*" -print
+          echo "=== spec add_src ==="
+          grep -n "add_src\|include_exts\|source.dir" buildozer.spec || true
+          echo "=== package line ==="
+          head -5 java/org/myapp/MediaMerger.java || true
+
       - name: Build APK with Buildozer
-        # إلغاء توجيهات NDK القديمة من البيئة وتحديد JAVA_HOME الصحيحة
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
           ANDROID_NDK_HOME: ""
           ANDROID_NDK_ROOT: ""
         run: |
-          yes | buildozer android debug
+          yes | buildozer -v android debug 2>&1 | tee build.log
+
+      - name: Check Java file was copied
+        if: always()
+        run: |
+          echo "=== Java source in build dir ==="
+          find .buildozer -iname "MediaMerger*" || echo "NOT FOUND"
+          echo "=== log mentions ==="
+          grep -n -i "mediamerger\|add_src\|javac" build.log | head -40 || true
+
+      - name: Check class inside APK
+        if: always()
+        run: |
+          mkdir -p apk_out
+          unzip -o bin/*.apk 'classes*.dex' -d apk_out
+          for f in apk_out/classes*.dex; do
+            strings "$f" | grep "Lorg/myapp/MediaMerger;" && echo "FOUND in $f"
+          done || true
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
