@@ -1,6 +1,6 @@
 [app]
 
-title = YTDownloader
+title = Aviro
 package.name = ytdownloader
 package.domain = org.myapp
 source.dir = .
