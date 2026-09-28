@@ -35,7 +35,6 @@ android.add_src = java
 android.gradle_dependencies = androidx.media3:media3-transformer:1.3.0, androidx.media3:media3-common:1.3.0
 android.enable_androidx = True
 
-icon.filename = %(source.dir)s/icon.png
 icon.adaptive_foreground.filename = %(source.dir)s/icon_fg.png
 icon.adaptive_background.filename = %(source.dir)s/icon_bg.png
 
