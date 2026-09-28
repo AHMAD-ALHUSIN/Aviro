@@ -9,10 +9,12 @@ from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
 from kivy.uix.label import Label
 from kivy.uix.progressbar import ProgressBar
-from kivy.uix.spinner import Spinner
+from kivy.uix.spinner import Spinner, SpinnerOption
 from kivy.uix.widget import Widget
 from kivy.graphics import Color, RoundedRectangle
 from kivy.clock import Clock
+from kivy.metrics import dp, sp
+from kivy.core.clipboard import Clipboard
 from kivy.utils import platform, get_color_from_hex
 
 import yt_dlp
@@ -25,6 +27,8 @@ ACCENT_COLOR_DARK = get_color_from_hex('#D63C3C')
 BTN_FETCH_COLOR = get_color_from_hex('#2A65C7')
 TEXT_COLOR = get_color_from_hex('#F5F5F5')
 SUBTEXT_COLOR = get_color_from_hex('#9AA0AC')
+INPUT_COLOR = get_color_from_hex('#262A35')
+DISABLED_COLOR = get_color_from_hex('#3A3F4B')
 
 
 class YTDLogger:
@@ -36,43 +40,68 @@ class YTDLogger:
 
 
 class RoundedButton(Button):
+    """زر بحواف دائرية، يتغير لونه عند الضغط ويصبح رمادياً عند التعطيل."""
+    def __init__(self, bg_color=ACCENT_COLOR, **kwargs):
+        super().__init__(**kwargs)
+        self._base = tuple(bg_color)
+        self._dark = (bg_color[0] * 0.82, bg_color[1] * 0.82, bg_color[2] * 0.82, bg_color[3])
+        self.background_normal = ''
+        self.background_down = ''
+        self.background_disabled_normal = ''
+        self.background_color = (0, 0, 0, 0)
+        self.color = TEXT_COLOR
+        self.disabled_color = SUBTEXT_COLOR
+        with self.canvas.before:
+            self._color_instr = Color(*self._base)
+            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(14)])
+        self.bind(pos=self._update_rect, size=self._update_rect)
+        self.bind(state=self._update_color, disabled=self._update_color)
+        self._update_color()
+
+    def _update_rect(self, *_):
+        self._rect.pos = self.pos
+        self._rect.size = self.size
+
+    def _update_color(self, *_):
+        if self.disabled:
+            self._color_instr.rgba = DISABLED_COLOR
+        elif self.state == 'down':
+            self._color_instr.rgba = self._dark
+        else:
+            self._color_instr.rgba = self._base
+
+
+class Card(BoxLayout):
+    def __init__(self, bg_color=CARD_COLOR, radius=20, **kwargs):
+        super().__init__(**kwargs)
+        with self.canvas.before:
+            Color(*bg_color)
+            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(radius)])
+        self.bind(pos=self._update_rect, size=self._update_rect)
+
+    def _update_rect(self, *_):
+        self._rect.pos = self.pos
+        self._rect.size = self.size
+
+
+class QualityOption(SpinnerOption):
+    """عناصر القائمة المنسدلة للجودة بتصميم داكن وحجم مريح للمس."""
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.background_normal = ''
         self.background_down = ''
-        self.background_color = (0, 0, 0, 0)
+        self.background_color = (0.17, 0.19, 0.26, 1)
         self.color = TEXT_COLOR
-        with self.canvas.before:
-            self._color_instr = Color(*ACCENT_COLOR)
-            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[12])
-        self.bind(pos=self._update_rect, size=self._update_rect)
-        self.bind(state=self._update_state_color)
-
-    def _update_rect(self, *_):
-        self._rect.pos = self.pos
-        self._rect.size = self.size
-
-    def _update_state_color(self, *_):
-        self._color_instr.rgba = ACCENT_COLOR_DARK if self.state == 'down' else ACCENT_COLOR
-
-
-class Card(BoxLayout):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        with self.canvas.before:
-            Color(*CARD_COLOR)
-            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[18])
-        self.bind(pos=self._update_rect, size=self._update_rect)
-
-    def _update_rect(self, *_):
-        self._rect.pos = self.pos
-        self._rect.size = self.size
+        self.font_size = sp(16)
+        self.size_hint_y = None
+        self.height = dp(50)
 
 
 class YTDownloaderApp(App):
     def build(self):
         self.title = 'Media Downloader'
         Window.clearcolor = BG_COLOR
+        Window.softinput_mode = 'below_target'  # لا تغطي لوحة المفاتيح حقل الرابط
         self.format_map = {}
 
         # كلاسات جافا تُحمَّل في الخيط الرئيسي فقط (انظر on_start)
@@ -80,49 +109,76 @@ class YTDownloaderApp(App):
         self.MediaMerger = None
         self.merger_error = None
 
-        root = BoxLayout(orientation='vertical', padding=[20, 20, 20, 20])
-        root.add_widget(Widget(size_hint_y=1))
+        root = BoxLayout(orientation='vertical', padding=[dp(20), dp(16), dp(20), dp(16)])
 
-        header = Label(text='Video Downloader', font_size='26sp', bold=True, color=TEXT_COLOR, size_hint=(1, None), height=38)
-        subheader = Label(text='Paste link, select quality, and download', font_size='13sp', color=SUBTEXT_COLOR, size_hint=(1, None), height=24)
+        # مساحة علوية أصغر من السفلية => المحتوى أعلى منتصف الشاشة قليلاً
+        root.add_widget(Widget(size_hint_y=0.7))
+
+        header = Label(text='Video Downloader', font_size=sp(30), bold=True, color=TEXT_COLOR,
+                       size_hint=(1, None), height=dp(46))
+        subheader = Label(text='Paste link, select quality, and download', font_size=sp(14),
+                          color=SUBTEXT_COLOR, size_hint=(1, None), height=dp(26))
         root.add_widget(header)
         root.add_widget(subheader)
-        root.add_widget(Widget(size_hint_y=None, height=14))
+        root.add_widget(Widget(size_hint_y=None, height=dp(22)))
 
-        card = Card(orientation='vertical', padding=20, spacing=14, size_hint=(1, None), height=290)
+        card = Card(orientation='vertical', padding=dp(20), spacing=dp(16), size_hint=(1, None))
+        card.bind(minimum_height=card.setter('height'))
 
-        self.url_input = TextInput(hint_text='Paste URL here...', multiline=False, size_hint=(1, None), height=46,
-                                   padding=[12, 11, 12, 11], background_color=(1, 1, 1, 0.06), foreground_color=TEXT_COLOR,
-                                   hint_text_color=SUBTEXT_COLOR, cursor_color=ACCENT_COLOR)
+        # --- صف الرابط + زر لصق ---
+        input_row = Card(bg_color=INPUT_COLOR, radius=14, orientation='horizontal',
+                         size_hint=(1, None), height=dp(58), padding=[dp(14), 0, dp(6), 0], spacing=dp(6))
+        self.url_input = TextInput(hint_text='Paste URL here...', multiline=False, font_size=sp(16),
+                                   background_normal='', background_active='', background_color=(0, 0, 0, 0),
+                                   foreground_color=TEXT_COLOR, hint_text_color=SUBTEXT_COLOR,
+                                   cursor_color=ACCENT_COLOR, padding=[0, dp(18), 0, dp(18)])
+        paste_btn = Button(text='Paste', font_size=sp(15), bold=True, size_hint=(None, 1), width=dp(72),
+                           background_normal='', background_down='', background_color=(0, 0, 0, 0),
+                           color=ACCENT_COLOR)
+        paste_btn.bind(on_press=self.paste_from_clipboard)
+        input_row.add_widget(self.url_input)
+        input_row.add_widget(paste_btn)
 
-        self.fetch_btn = Button(text='1. Fetch Qualities', font_size='14sp', bold=True, background_normal='',
-                                background_color=BTN_FETCH_COLOR, color=TEXT_COLOR, size_hint=(1, None), height=46)
+        self.fetch_btn = RoundedButton(text='1.  Fetch Qualities', font_size=sp(17), bold=True,
+                                       bg_color=BTN_FETCH_COLOR, size_hint=(1, None), height=dp(58))
         self.fetch_btn.bind(on_press=self.start_fetch_formats)
 
-        self.quality_spinner = Spinner(text='-- Select Quality --', values=(), size_hint=(1, None), height=44,
-                                       background_normal='', background_color=(0.14, 0.16, 0.22, 1), color=TEXT_COLOR)
+        self.quality_spinner = Spinner(text='-- Select Quality --', values=(), font_size=sp(16),
+                                       size_hint=(1, None), height=dp(58), option_cls=QualityOption,
+                                       background_normal='', background_down='',
+                                       background_color=INPUT_COLOR, color=TEXT_COLOR)
 
-        self.download_btn = RoundedButton(text='2. Download Now', font_size='15sp', bold=True, size_hint=(1, None), height=48, disabled=True)
+        self.download_btn = RoundedButton(text='2.  Download Now', font_size=sp(18), bold=True,
+                                          bg_color=ACCENT_COLOR, size_hint=(1, None), height=dp(64), disabled=True)
         self.download_btn.bind(on_press=self.start_download)
 
-        self.progress_bar = ProgressBar(max=100, value=0, size_hint=(1, None), height=8)
+        self.progress_bar = ProgressBar(max=100, value=0, size_hint=(1, None), height=dp(10))
 
-        card.add_widget(self.url_input)
+        card.add_widget(input_row)
         card.add_widget(self.fetch_btn)
         card.add_widget(self.quality_spinner)
         card.add_widget(self.download_btn)
         card.add_widget(self.progress_bar)
         root.add_widget(card)
 
-        self.status_label = Label(text='Ready', font_size='13sp', color=SUBTEXT_COLOR, halign='center', valign='top', size_hint=(1, None), height=60)
+        self.status_label = Label(text='Ready', font_size=sp(14), color=SUBTEXT_COLOR, halign='center',
+                                  valign='top', size_hint=(1, None), height=dp(90))
         self.status_label.bind(size=lambda inst, size: setattr(inst, 'text_size', (size[0], None)))
 
-        root.add_widget(Widget(size_hint_y=None, height=10))
+        root.add_widget(Widget(size_hint_y=None, height=dp(14)))
         root.add_widget(self.status_label)
-        root.add_widget(Widget(size_hint_y=1))
+        root.add_widget(Widget(size_hint_y=1.3))
 
         self.request_permissions()
         return root
+
+    def paste_from_clipboard(self, instance):
+        try:
+            text = Clipboard.paste()
+            if text:
+                self.url_input.text = text.strip()
+        except Exception:
+            pass
 
     def on_start(self):
         """تحميل كلاسات جافا في الخيط الرئيسي (هنا يرى الـ ClassLoader كلاسات التطبيق)."""
