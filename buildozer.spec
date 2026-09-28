@@ -35,6 +35,9 @@ icon.filename = %(source.dir)s/icon.png
 icon.adaptive_foreground.filename = %(source.dir)s/icon_fg.png
 icon.adaptive_background.filename = %(source.dir)s/icon_bg.png
 
+   presplash.filename = %(source.dir)s/presplash.png
+   android.presplash_color = #12141A
+
 android.proguard_rules = proguard-rules.pro
 
 [buildozer]
