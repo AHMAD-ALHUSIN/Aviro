@@ -1,5 +1,5 @@
-import os
 import re
+import json
 import threading
 
 from kivy.app import App
@@ -17,6 +17,9 @@ from kivy.metrics import dp, sp
 from kivy.core.clipboard import Clipboard
 from kivy.utils import platform, get_color_from_hex
 
+from oscpy.client import OSCClient
+from oscpy.server import OSCThreadServer
+
 # استيراد yt_dlp ثقيل (آلاف الملفات)، لذلك يُحمَّل في الخلفية بعد ظهور الواجهة
 yt_dlp = None
 
@@ -28,6 +31,13 @@ def load_yt_dlp():
         yt_dlp = _yt_dlp
     return yt_dlp
 
+
+# --- IPC with the download service ---
+HOST = '127.0.0.1'
+SERVICE_PORT = 3001   # الخدمة تستمع هنا
+APP_PORT = 3002       # التطبيق يستمع هنا
+SERVICE_CLASS = 'org.myapp.ytdownloader.ServiceDownloader'  # package.domain + package.name + Service + Name
+
 # --- UI Colors ---
 BG_COLOR = get_color_from_hex('#12141A')
 CARD_COLOR = get_color_from_hex('#1C1F27')
@@ -38,6 +48,9 @@ TEXT_COLOR = get_color_from_hex('#F5F5F5')
 SUBTEXT_COLOR = get_color_from_hex('#9AA0AC')
 INPUT_COLOR = get_color_from_hex('#262A35')
 DISABLED_COLOR = get_color_from_hex('#3A3F4B')
+
+DOWNLOAD_TEXT = '2.  Download Now'
+CANCEL_TEXT = 'Cancel Download'
 
 
 class YTDLogger:
@@ -111,12 +124,22 @@ class YTDownloaderApp(App):
         self.title = 'Media Downloader'
         Window.clearcolor = BG_COLOR
         Window.softinput_mode = 'below_target'  # لا تغطي لوحة المفاتيح حقل الرابط
-        self.format_map = {}
 
-        # كلاسات جافا تُحمَّل في الخيط الرئيسي فقط (انظر on_start)
+        self.format_map = {}
+        self.fetched_url = None
+        self.video_title = 'Video'
+
+        # حالة الخدمة
+        self.ServiceCls = None
         self.PythonActivity = None
-        self.MediaMerger = None
-        self.merger_error = None
+        self.service_error = None
+        self.service_ready = False
+        self.pending_job = None
+        self.is_downloading = False
+        self._cancelling = False
+        self._ready_event = None
+        self.osc = None
+        self.osc_client = None
 
         root = BoxLayout(orientation='vertical', padding=[dp(20), dp(16), dp(20), dp(16)])
 
@@ -157,9 +180,9 @@ class YTDownloaderApp(App):
                                        background_normal='', background_down='',
                                        background_color=INPUT_COLOR, color=TEXT_COLOR)
 
-        self.download_btn = RoundedButton(text='2.  Download Now', font_size=sp(18), bold=True,
+        self.download_btn = RoundedButton(text=DOWNLOAD_TEXT, font_size=sp(18), bold=True,
                                           bg_color=ACCENT_COLOR, size_hint=(1, None), height=dp(64), disabled=True)
-        self.download_btn.bind(on_press=self.start_download)
+        self.download_btn.bind(on_press=self.on_download_pressed)
 
         self.progress_bar = ProgressBar(max=100, value=0, size_hint=(1, None), height=dp(10))
 
@@ -181,6 +204,120 @@ class YTDownloaderApp(App):
         self.request_permissions()
         return root
 
+    # ------------------------------------------------------------ lifecycle
+    def on_start(self):
+        # تحميل yt_dlp في الخلفية حتى تظهر الواجهة فوراً
+        threading.Thread(target=lambda: load_yt_dlp(), daemon=True).start()
+
+        # قناة الاتصال مع الخدمة (OSC)
+        self.osc = OSCThreadServer(encoding='utf8')
+        self.osc.listen(HOST, port=APP_PORT, default=True)
+        self.osc.bind(b'/ready', self._osc_ready)
+        self.osc.bind(b'/state', self._osc_state)
+        self.osc.bind(b'/progress', self._osc_progress)
+        self.osc.bind(b'/done', self._osc_done)
+        self.osc.bind(b'/cancelled', self._osc_cancelled)
+        self.osc.bind(b'/error', self._osc_error)
+        self.osc_client = OSCClient(HOST, SERVICE_PORT, encoding='utf8')
+
+        if platform != 'android':
+            return
+        try:
+            # كلاسات جافا تُحمَّل في الخيط الرئيسي فقط
+            from jnius import autoclass
+            self.PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            self.ServiceCls = autoclass(SERVICE_CLASS)
+        except Exception as e:
+            self.service_error = str(e)
+            self.set_status(f'Service load failed:\n{e}')
+            return
+
+        # إذا كانت الخدمة تعمل (تنزيل جارٍ) نستعيد الحالة
+        self.send_to_service(b'/sync', 1)
+
+    def on_stop(self):
+        try:
+            if self.osc:
+                self.osc.stop_all()
+        except Exception:
+            pass
+
+    def on_pause(self):
+        return True  # يبقي التطبيق حياً عند الخروج منه
+
+    def on_resume(self):
+        if platform == 'android':
+            self.send_to_service(b'/sync', 1)
+
+    def request_permissions(self):
+        if platform == 'android':
+            try:
+                from android.permissions import request_permissions, Permission
+                request_permissions([
+                    Permission.INTERNET,
+                    Permission.WRITE_EXTERNAL_STORAGE,
+                    Permission.READ_EXTERNAL_STORAGE,
+                    'android.permission.POST_NOTIFICATIONS',
+                ])
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------ service IPC
+    def send_to_service(self, path, *args):
+        try:
+            self.osc_client.send_message(path, list(args))
+        except Exception as e:
+            print('OSC send failed:', e)
+
+    def start_service(self):
+        self.ServiceCls.start(self.PythonActivity.mActivity, '')
+
+    def _osc_ready(self, *_):
+        def _do(dt):
+            self.service_ready = True
+            if self._ready_event:
+                self._ready_event.cancel()
+                self._ready_event = None
+            if self.pending_job is not None:
+                job, self.pending_job = self.pending_job, None
+                self.set_status('Starting download...')
+                self.send_to_service(b'/download', json.dumps(job))
+        Clock.schedule_once(_do)
+
+    def _osc_state(self, busy, percent, text):
+        def _do(dt):
+            if busy:
+                self.set_busy(True)
+                self.progress_bar.value = percent
+                self.set_status(text or 'Downloading...')
+        Clock.schedule_once(_do)
+
+    def _osc_progress(self, percent, text):
+        def _do(dt):
+            if not self.is_downloading:
+                self.set_busy(True)
+            self.progress_bar.value = percent
+            self.set_status(text)
+            # لا يمكن الإلغاء أثناء الدمج
+            if not self._cancelling:
+                self.download_btn.disabled = percent >= 95
+        Clock.schedule_once(_do)
+
+    def _osc_done(self, path):
+        Clock.schedule_once(lambda dt: self.finish_success())
+
+    def _osc_cancelled(self, *_):
+        Clock.schedule_once(lambda dt: self.finish_cancelled())
+
+    def _osc_error(self, msg):
+        Clock.schedule_once(lambda dt: self.finish_error(msg))
+
+    def _on_ready_timeout(self, dt):
+        if self.pending_job is not None:
+            self.pending_job = None
+            self.finish_error('Background service did not start.\nCheck notification permission and try again.')
+
+    # ------------------------------------------------------------ UI actions
     def paste_from_clipboard(self, instance):
         try:
             text = Clipboard.paste()
@@ -188,30 +325,6 @@ class YTDownloaderApp(App):
                 self.url_input.text = text.strip()
         except Exception:
             pass
-
-    def on_start(self):
-        """تحميل كلاسات جافا في الخيط الرئيسي (هنا يرى الـ ClassLoader كلاسات التطبيق)."""
-        # تحميل yt_dlp في الخلفية حتى تظهر الواجهة فوراً
-        threading.Thread(target=lambda: load_yt_dlp(), daemon=True).start()
-        if platform != 'android':
-            return
-        try:
-            from jnius import autoclass
-            self.PythonActivity = autoclass('org.kivy.android.PythonActivity')
-            self.MediaMerger = autoclass('org.myapp.MediaMerger')
-            print('MediaMerger loaded OK on main thread')
-        except Exception as e:
-            self.merger_error = str(e)
-            print('MediaMerger load FAILED:', e)
-            self.set_status(f'MediaMerger load failed:\n{e}')
-
-    def request_permissions(self):
-        if platform == 'android':
-            try:
-                from android.permissions import request_permissions, Permission
-                request_permissions([Permission.INTERNET, Permission.WRITE_EXTERNAL_STORAGE, Permission.READ_EXTERNAL_STORAGE])
-            except Exception:
-                pass
 
     def start_fetch_formats(self, instance):
         url = self.url_input.text.strip()
@@ -233,6 +346,7 @@ class YTDownloaderApp(App):
                 info = ydl.extract_info(url, download=False)
                 formats = info.get('formats', [])
                 options = {}
+                title = info.get('title') or 'Video'
 
                 # الدمج مسموح ليوتيوب فقط؛ باقي المنصات تحميل مباشر بدون دمج
                 extractor = (info.get('extractor_key') or info.get('extractor') or '').lower()
@@ -289,6 +403,8 @@ class YTDownloaderApp(App):
 
                 def _update_spinner(dt):
                     self.format_map = options
+                    self.fetched_url = url
+                    self.video_title = title
                     self.quality_spinner.values = list(options.keys())
                     if self.quality_spinner.values:
                         self.quality_spinner.text = self.quality_spinner.values[0]
@@ -301,167 +417,94 @@ class YTDownloaderApp(App):
             Clock.schedule_once(lambda dt, err=str(e): self.set_status(f'Error:\n{err}'))
             Clock.schedule_once(lambda dt: setattr(self.fetch_btn, 'disabled', False))
 
-    def start_download(self, instance):
+    def on_download_pressed(self, instance):
+        if self.is_downloading:
+            self.cancel_download()
+        else:
+            self.start_download()
+
+    def start_download(self):
+        if platform != 'android':
+            self.set_status('Downloads run in the background service (Android only).')
+            return
+        if self.ServiceCls is None:
+            self.set_status(f'Background service unavailable:\n{self.service_error}')
+            return
+
         url = self.url_input.text.strip()
         selected_text = self.quality_spinner.text
         if not url or selected_text not in self.format_map:
             self.set_status('Please select a valid quality option.')
             return
+        if url != self.fetched_url:
+            self.set_status('URL changed. Tap "Fetch Qualities" again.')
+            return
 
-        format_tuple = self.format_map[selected_text]
+        video_id, audio_id = self.format_map[selected_text]
+        job = {'url': url, 'video_id': video_id, 'audio_id': audio_id, 'title': self.video_title}
+
+        self._cancelling = False
         self.progress_bar.value = 0
-        self.set_status('Preparing download...')
+        self.set_busy(True)
+
+        if self.service_ready:
+            self.set_status('Starting download...')
+            self.send_to_service(b'/download', json.dumps(job))
+        else:
+            # تشغيل الخدمة أولاً، وسيُرسل العمل عند وصول /ready
+            self.set_status('Starting background service...')
+            self.pending_job = job
+            try:
+                self.start_service()
+            except Exception as e:
+                self.pending_job = None
+                self.finish_error(f'Could not start service: {e}')
+                return
+            self._ready_event = Clock.schedule_once(self._on_ready_timeout, 25)
+
+    def cancel_download(self):
+        self._cancelling = True
         self.download_btn.disabled = True
-        self.fetch_btn.disabled = True
+        self.set_status('Cancelling...')
+        if self.pending_job is not None:
+            # لم يبدأ فعلياً بعد
+            self.pending_job = None
+            if self._ready_event:
+                self._ready_event.cancel()
+                self._ready_event = None
+            self.finish_cancelled()
+        else:
+            self.send_to_service(b'/cancel', 1)
 
-        threading.Thread(target=self.download_video, args=(url, format_tuple), daemon=True).start()
-
-    def get_save_directory(self):
-        if platform == 'android':
-            try:
-                from jnius import autoclass
-                Environment = autoclass('android.os.Environment')
-                download_dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                if download_dir is not None:
-                    return download_dir.getAbsolutePath()
-            except Exception:
-                pass
-            return '/storage/emulated/0/Download'
-        return os.getcwd()
-
-    def scan_file_to_gallery(self, file_path):
-        if platform == 'android' and self.PythonActivity is not None:
-            try:
-                from jnius import autoclass
-                MediaScannerConnection = autoclass('android.media.MediaScannerConnection')
-                context = self.PythonActivity.mActivity.getApplicationContext()
-                MediaScannerConnection.scanFile(context, [file_path], None, None)
-            except Exception:
-                pass
-
-    def progress_hook(self, d):
-        if d.get('status') == 'downloading':
-            raw_percent = d.get('_percent_str', '')
-            clean_percent = re.sub(r'\x1b\[[0-9;]*m', '', raw_percent).replace('%', '').strip()
-            try:
-                percent = float(clean_percent)
-            except ValueError:
-                percent = None
-
-            raw_speed = d.get('_speed_str', '')
-            speed = re.sub(r'\x1b\[[0-9;]*m', '', raw_speed).strip()
-
-            def _update(dt):
-                if percent is not None:
-                    self.progress_bar.value = percent
-                self.set_status(f'Downloading... {clean_percent}% | {speed}')
-            Clock.schedule_once(_update)
-
-        elif d.get('status') == 'finished':
-            Clock.schedule_once(lambda dt: self.set_status('Stream downloaded. Processing...'))
-
-    def download_video(self, url, format_tuple):
-        try:
-            load_yt_dlp()
-            video_id, audio_id = format_tuple
-            save_dir = self.get_save_directory()
-
-            with yt_dlp.YoutubeDL({'quiet': True, 'logger': YTDLogger(), 'nocheckcertificate': True}) as ydl:
-                info = ydl.extract_info(url, download=False)
-                raw_title = info.get('title', 'Video')
-                safe_title = "".join([c for c in raw_title if c.isalnum() or c in (' ', '_', '-')]).rstrip()
-                if not safe_title: safe_title = "Video"
-
-            # خيار تحميل الصوت فقط
-            if video_id is None and audio_id is not None:
-                final_path = os.path.join(save_dir, f"{safe_title}.m4a")
-                ydl_opts = {
-                    'format': audio_id, 'outtmpl': final_path, 'quiet': True,
-                    'logger': YTDLogger(), 'nocheckcertificate': True, 'progress_hooks': [self.progress_hook]
-                }
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-                self.scan_file_to_gallery(final_path)
-                Clock.schedule_once(lambda dt: self.finish_success())
-                return
-
-            final_path = os.path.join(save_dir, f"{safe_title}.mp4")
-
-            # ملف فيديو وصوت جاهز مسبقاً بدون دمج
-            if audio_id is None:
-                ydl_opts = {
-                    'format': video_id, 'outtmpl': final_path, 'quiet': True,
-                    'logger': YTDLogger(), 'nocheckcertificate': True, 'progress_hooks': [self.progress_hook]
-                }
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-                self.scan_file_to_gallery(final_path)
-                Clock.schedule_once(lambda dt: self.finish_success())
-                return
-
-            # فيديو وصوت منفصلان (تحميل مؤقت ثم الدمج بـ Media3)
-            if platform == 'android':
-                if self.PythonActivity is None:
-                    raise RuntimeError(f'PythonActivity not loaded: {self.merger_error}')
-                cache_dir = self.PythonActivity.mActivity.getExternalCacheDir().getAbsolutePath()
-            else:
-                cache_dir = os.getcwd()
-
-            video_tmp = os.path.join(cache_dir, "video.tmp.mp4")
-            audio_tmp = os.path.join(cache_dir, "audio.tmp.m4a")
-
-            for tmp in [video_tmp, audio_tmp]:
-                if os.path.exists(tmp):
-                    try: os.remove(tmp)
-                    except Exception: pass
-
-            Clock.schedule_once(lambda dt: self.set_status('Downloading Video stream...'))
-            with yt_dlp.YoutubeDL({'format': video_id, 'outtmpl': video_tmp, 'quiet': True, 'nocheckcertificate': True, 'logger': YTDLogger(), 'progress_hooks': [self.progress_hook]}) as ydl:
-                ydl.download([url])
-
-            Clock.schedule_once(lambda dt: self.set_status('Downloading Audio stream...'))
-            with yt_dlp.YoutubeDL({'format': audio_id, 'outtmpl': audio_tmp, 'quiet': True, 'nocheckcertificate': True, 'logger': YTDLogger()}) as ydl:
-                ydl.download([url])
-
-            Clock.schedule_once(lambda dt: self.set_status('Merging with Media3... (Please wait)'))
-
-            if platform == 'android':
-                # نستخدم الكلاس المحمّل مسبقاً في الخيط الرئيسي (لا autoclass هنا)
-                if self.MediaMerger is None:
-                    raise RuntimeError(f'MediaMerger class was not loaded at startup: {self.merger_error}')
-
-                merger = self.MediaMerger()
-                result = merger.mergeBlocking(self.PythonActivity.mActivity, video_tmp, audio_tmp, final_path)
-
-                if result == "SUCCESS":
-                    self.scan_file_to_gallery(final_path)
-                    Clock.schedule_once(lambda dt: self.finish_success())
-                else:
-                    Clock.schedule_once(lambda dt, r=result: self.finish_error(f'Merge Error: {r}'))
-            else:
-                Clock.schedule_once(lambda dt: self.finish_error("Merging is only supported on Android devices."))
-
-            for tmp in [video_tmp, audio_tmp]:
-                if os.path.exists(tmp):
-                    try: os.remove(tmp)
-                    except Exception: pass
-
-        except Exception as e:
-            Clock.schedule_once(lambda dt, err=str(e): self.finish_error(err))
+    # ------------------------------------------------------------ UI state
+    def set_busy(self, busy):
+        self.is_downloading = busy
+        self.fetch_btn.disabled = busy
+        self.download_btn.text = CANCEL_TEXT if busy else DOWNLOAD_TEXT
+        self.download_btn.disabled = False
 
     def set_status(self, text):
         self.status_label.text = text
 
     def finish_success(self):
+        self.service_ready = False  # الخدمة تُغلق نفسها بعد الانتهاء
+        self._cancelling = False
         self.progress_bar.value = 100
         self.set_status('Download complete! Saved in Downloads folder.')
-        self.download_btn.disabled = False
-        self.fetch_btn.disabled = False
+        self.set_busy(False)
+
+    def finish_cancelled(self):
+        self.service_ready = False
+        self._cancelling = False
+        self.progress_bar.value = 0
+        self.set_status('Download cancelled.')
+        self.set_busy(False)
 
     def finish_error(self, err):
+        self.service_ready = False
+        self._cancelling = False
         self.set_status(f'Failed:\n{err}')
-        self.download_btn.disabled = False
-        self.fetch_btn.disabled = False
+        self.set_busy(False)
 
 
 if __name__ == '__main__':
