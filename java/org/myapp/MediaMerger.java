@@ -24,7 +24,7 @@ public class MediaMerger {
                 outFile.delete();
             }
 
-            // 1. إعداد استخراج مسار الفيديو
+            // 1. إعداد مسار الفيديو
             videoExtractor = new MediaExtractor();
             videoExtractor.setDataSource(videoPath);
             int videoTrackIndex = -1;
@@ -44,7 +44,7 @@ public class MediaMerger {
                 return "Error: No video track found in " + videoPath;
             }
 
-            // 2. إعداد استخراج مسار الصوت
+            // 2. إعداد مسار الصوت
             audioExtractor = new MediaExtractor();
             audioExtractor.setDataSource(audioPath);
             int audioTrackIndex = -1;
@@ -64,9 +64,9 @@ public class MediaMerger {
                 return "Error: No audio track found in " + audioPath;
             }
 
-            // 3. إنشاء المدمج (Muxer) بفتحات الصوت والفيديو
+            // 3. إنشاء المدمج (Muxer)
             muxer = new MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
-            
+
             videoExtractor.selectTrack(videoTrackIndex);
             int muxerVideoTrack = muxer.addTrack(videoFormat);
 
@@ -75,33 +75,53 @@ public class MediaMerger {
 
             muxer.start();
 
-            // 4. نسخ بيانات الفيديو مباشرة بدون إعادة تشفير (Direct Buffer Copy)
-            ByteBuffer buffer = ByteBuffer.allocate(2 * 1024 * 1024); // ذاكرة مؤقتة بحجم 2MB
+            // 4. تخصيص ذاكرة Native مباشرة للوصول السريع بدون JNI Overhead
+            ByteBuffer buffer = ByteBuffer.allocateDirect(2 * 1024 * 1024); // 2MB Direct Buffer
             MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
 
-            while (true) {
-                bufferInfo.offset = 0;
-                bufferInfo.size = videoExtractor.readSampleData(buffer, 0);
-                if (bufferInfo.size < 0) {
-                    break;
-                }
-                bufferInfo.presentationTimeUs = videoExtractor.getSampleTime();
-                bufferInfo.flags = videoExtractor.getSampleFlags();
-                muxer.writeSampleData(muxerVideoTrack, buffer, bufferInfo);
-                videoExtractor.advance();
-            }
+            // 5. الدمج المتداخل زمنيًا (Interleaving) لسرعة فائقة وإغلاق فوري
+            boolean hasVideo = true;
+            boolean hasAudio = true;
 
-            // 5. نسخ بيانات الصوت مباشرة
-            while (true) {
-                bufferInfo.offset = 0;
-                bufferInfo.size = audioExtractor.readSampleData(buffer, 0);
-                if (bufferInfo.size < 0) {
-                    break;
+            while (hasVideo || hasAudio) {
+                long videoTime = hasVideo ? videoExtractor.getSampleTime() : -1;
+                if (videoTime < 0) hasVideo = false;
+
+                long audioTime = hasAudio ? audioExtractor.getSampleTime() : -1;
+                if (audioTime < 0) hasAudio = false;
+
+                if (!hasVideo && !hasAudio) break;
+
+                boolean writeVideo;
+                if (hasVideo && hasAudio) {
+                    writeVideo = (videoTime <= audioTime);
+                } else {
+                    writeVideo = hasVideo;
                 }
-                bufferInfo.presentationTimeUs = audioExtractor.getSampleTime();
-                bufferInfo.flags = audioExtractor.getSampleFlags();
-                muxer.writeSampleData(muxerAudioTrack, buffer, bufferInfo);
-                audioExtractor.advance();
+
+                if (writeVideo) {
+                    bufferInfo.offset = 0;
+                    bufferInfo.size = videoExtractor.readSampleData(buffer, 0);
+                    if (bufferInfo.size < 0) {
+                        hasVideo = false;
+                    } else {
+                        bufferInfo.presentationTimeUs = videoTime;
+                        bufferInfo.flags = videoExtractor.getSampleFlags();
+                        muxer.writeSampleData(muxerVideoTrack, buffer, bufferInfo);
+                        videoExtractor.advance();
+                    }
+                } else {
+                    bufferInfo.offset = 0;
+                    bufferInfo.size = audioExtractor.readSampleData(buffer, 0);
+                    if (bufferInfo.size < 0) {
+                        hasAudio = false;
+                    } else {
+                        bufferInfo.presentationTimeUs = audioTime;
+                        bufferInfo.flags = audioExtractor.getSampleFlags();
+                        muxer.writeSampleData(muxerAudioTrack, buffer, bufferInfo);
+                        audioExtractor.advance();
+                    }
+                }
             }
 
             return "SUCCESS";
@@ -109,7 +129,6 @@ public class MediaMerger {
         } catch (Exception e) {
             return "Exception: " + e.getMessage();
         } finally {
-            // إغلاق الموارد وحفظ الملف
             try {
                 if (videoExtractor != null) videoExtractor.release();
                 if (audioExtractor != null) audioExtractor.release();
