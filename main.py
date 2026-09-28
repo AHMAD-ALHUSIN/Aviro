@@ -17,7 +17,16 @@ from kivy.metrics import dp, sp
 from kivy.core.clipboard import Clipboard
 from kivy.utils import platform, get_color_from_hex
 
-import yt_dlp
+# استيراد yt_dlp ثقيل (آلاف الملفات)، لذلك يُحمَّل في الخلفية بعد ظهور الواجهة
+yt_dlp = None
+
+
+def load_yt_dlp():
+    global yt_dlp
+    if yt_dlp is None:
+        import yt_dlp as _yt_dlp
+        yt_dlp = _yt_dlp
+    return yt_dlp
 
 # --- UI Colors ---
 BG_COLOR = get_color_from_hex('#12141A')
@@ -182,6 +191,8 @@ class YTDownloaderApp(App):
 
     def on_start(self):
         """تحميل كلاسات جافا في الخيط الرئيسي (هنا يرى الـ ClassLoader كلاسات التطبيق)."""
+        # تحميل yt_dlp في الخلفية حتى تظهر الواجهة فوراً
+        threading.Thread(target=lambda: load_yt_dlp(), daemon=True).start()
         if platform != 'android':
             return
         try:
@@ -216,6 +227,7 @@ class YTDownloaderApp(App):
 
     def fetch_formats_thread(self, url):
         try:
+            load_yt_dlp()
             ydl_opts = {'quiet': True, 'no_warnings': True, 'logger': YTDLogger(), 'nocheckcertificate': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -350,6 +362,7 @@ class YTDownloaderApp(App):
 
     def download_video(self, url, format_tuple):
         try:
+            load_yt_dlp()
             video_id, audio_id = format_tuple
             save_dir = self.get_save_directory()
 
