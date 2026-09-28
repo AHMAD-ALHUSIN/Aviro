@@ -75,11 +75,20 @@ public class MediaMerger {
 
             muxer.start();
 
-            // 4. تخصيص ذاكرة Native مباشرة للوصول السريع بدون JNI Overhead
-            ByteBuffer buffer = ByteBuffer.allocateDirect(2 * 1024 * 1024); // 2MB Direct Buffer
+            // 🌟 تحسين 1: حساب الحجم الأقصى للـ Buffer ديناميكياً بدلاً من تثبيته
+            int maxBufferSize = 256 * 1024; // قيمة مبدئية
+            if (videoFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                maxBufferSize = Math.max(maxBufferSize, videoFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE));
+            }
+            if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                maxBufferSize = Math.max(maxBufferSize, audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE));
+            }
+
+            // تخصيص الذاكرة بناءً على أكبر إطار متوقع
+            ByteBuffer buffer = ByteBuffer.allocateDirect(maxBufferSize);
             MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
 
-            // 5. الدمج المتداخل زمنيًا (Interleaving) لسرعة فائقة وإغلاق فوري
+            // 5. الدمج المتداخل زمنيًا (Interleaving)
             boolean hasVideo = true;
             boolean hasAudio = true;
 
@@ -98,6 +107,9 @@ public class MediaMerger {
                 } else {
                     writeVideo = hasVideo;
                 }
+
+                // 🌟 تحسين 2: تصفير الـ Buffer قبل كل قراءة لتجنب تداخل البيانات
+                buffer.clear(); 
 
                 if (writeVideo) {
                     bufferInfo.offset = 0;
@@ -129,6 +141,7 @@ public class MediaMerger {
         } catch (Exception e) {
             return "Exception: " + e.getMessage();
         } finally {
+            // إغلاق الموارد بشكل آمن
             try {
                 if (videoExtractor != null) videoExtractor.release();
                 if (audioExtractor != null) audioExtractor.release();
