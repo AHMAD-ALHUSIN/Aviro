@@ -2,7 +2,7 @@
 
 title = YTDownloader
 package.name = ytdownloader
-package.domain = org.myapps
+package.domain = org.myapp
 source.dir = .
 
 source.include_exts = py, png, jpg, kv, atlas
