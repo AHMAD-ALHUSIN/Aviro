@@ -341,7 +341,7 @@ class YTDownloaderApp(App):
     def fetch_formats_thread(self, url):
         try:
             load_yt_dlp()
-            ydl_opts = {'quiet': True, 'no_warnings': True, 'logger': YTDLogger(), 'nocheckcertificate': True}
+            ydl_opts = {'quiet': True, 'no_warnings': True, 'logger': YTDLogger()}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 formats = info.get('formats', [])
