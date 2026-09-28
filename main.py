@@ -166,6 +166,10 @@ class YTDownloaderApp(App):
                 formats = info.get('formats', [])
                 options = {}
 
+                # الدمج مسموح ليوتيوب فقط؛ باقي المنصات تحميل مباشر بدون دمج
+                extractor = (info.get('extractor_key') or info.get('extractor') or '').lower()
+                is_youtube = 'youtube' in extractor or 'youtu' in url.lower()
+
                 # 1. تحديد أفضل مسار صوتي من نوع m4a أو أفضل صوت متاح
                 audio_formats = [f for f in formats if f.get('vcodec') == 'none' and f.get('acodec') != 'none']
                 audio_formats.sort(key=lambda x: x.get('tbr') or x.get('abr') or 0)
@@ -180,6 +184,9 @@ class YTDownloaderApp(App):
                     vcodec = f.get('vcodec')
                     height = f.get('height')
                     if vcodec != 'none' and height and isinstance(height, int):
+                        # غير يوتيوب: نتجاهل الفيديو بدون صوت (لأنه يحتاج دمج)
+                        if not is_youtube and f.get('acodec') == 'none':
+                            continue
                         if height not in height_map:
                             height_map[height] = f
                         else:
@@ -201,9 +208,14 @@ class YTDownloaderApp(App):
 
                     if acodec != 'none':
                         options[label] = (format_id, None)
-                    elif best_audio_id:
+                    elif best_audio_id and is_youtube:
                         options[label] = (format_id, best_audio_id)
 
+                # غير يوتيوب ولا توجد صيغة جاهزة بالدقة: أفضل ملف واحد متاح
+                if not is_youtube and not options:
+                    options["Best Available"] = ('best', None)
+
+                # تحميل الصوت فقط (إن وُجد مسار صوتي)
                 if best_audio_id:
                     options["Audio Only (M4A)"] = (None, best_audio_id)
 
