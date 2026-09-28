@@ -7,15 +7,15 @@ source.dir = .
 
 source.include_exts = py, png, jpg, kv, atlas
 
-version = 0.1
+version = 0.2
 
-# تم إضافة pyjnius للاستدعاءات الخاصة بنظام الأندرويد
-requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.2.1,pillow,yt-dlp,certifi,idna,urllib3,requests,pyjnius
+# oscpy للتواصل بين التطبيق والخدمة
+requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.2.1,pillow,yt-dlp,certifi,idna,urllib3,requests,pyjnius,oscpy
 
 orientation = portrait
 fullscreen = 0
 
-android.permissions = INTERNET, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE
+android.permissions = INTERNET, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE, FOREGROUND_SERVICE, FOREGROUND_SERVICE_DATA_SYNC, POST_NOTIFICATIONS, WAKE_LOCK
 
 android.api = 34
 android.minapi = 21
@@ -26,6 +26,10 @@ android.build_tools_version = 34.0.0
 android.ndk = 25c
 android.archs = arm64-v8a
 android.allow_backup = True
+
+# خدمة التنزيل (تعمل كـ Foreground Service)
+services = downloader:service.py:foreground
+android.foreground_service_types = dataSync
 
 android.add_src = java
 android.gradle_dependencies = androidx.media3:media3-transformer:1.3.0, androidx.media3:media3-common:1.3.0
