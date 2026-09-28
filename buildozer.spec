@@ -5,8 +5,8 @@ package.name = ytdownloader
 package.domain = org.myapp
 source.dir = .
 
-source.include_exts = py, png, jpg, kv, atlas
-source.include_patterns = ffmpeg, *.so
+source.include_exts = py, png, jpg, kv, atlas, java, so
+source.include_patterns = ffmpeg, *.so, java
 
 version = 0.1
 
