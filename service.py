@@ -2,8 +2,9 @@ import os
 import json
 import time
 import threading
+import concurrent.futures
 
-from jnius import autoclass
+from jnius import autoclass, detach
 from oscpy.client import OSCClient
 from oscpy.server import OSCThreadServer
 
@@ -25,6 +26,7 @@ except Exception as e:
     MERGER_ERROR = str(e)
 
 client = OSCClient(HOST, APP_PORT, encoding='utf8')
+osc_lock = threading.Lock()  # لحماية إرسال البيانات من الخيوط المتوازية
 
 state = {
     'busy': False,
@@ -33,6 +35,8 @@ state = {
     'text': '',
     'last_activity': time.time(),
     'stop_at': 0,
+    'video_frac': 0.0,  # لتتبع تقدم الفيديو بشكل منفصل
+    'audio_frac': 0.0   # لتتبع تقدم الصوت بشكل منفصل
 }
 
 class YTDLogger:
@@ -45,7 +49,9 @@ class YTDLogger:
 # ------------------------------------------------------------------ helpers
 def send(path, *args):
     try:
-        client.send_message(path, list(args))
+        # استخدام القفل لمنع تداخل الرسائل من خيوط التحميل المتوازية
+        with osc_lock:
+            client.send_message(path, list(args))
     except Exception as e:
         print('OSC send failed:', e)
 
@@ -108,8 +114,8 @@ def scan_file(path):
         pass
 
 def make_hook(lo, hi, label):
-    """تم تحسينه لتقليل الضغط على واجهة المستخدم عبر OSC"""
-    import yt_dlp # استدعاء هنا لتجنب البطء
+    """تُستخدم للتحميل الفردي (صوت فقط أو فيديو فقط بدون دمج)"""
+    import yt_dlp
     last_time = [0.0]
     last_percent = [0]
 
@@ -120,7 +126,6 @@ def make_hook(lo, hi, label):
             return
         
         now = time.time()
-        
         total = d.get('total_bytes') or d.get('total_bytes_estimate')
         done = d.get('downloaded_bytes') or 0
         
@@ -133,22 +138,62 @@ def make_hook(lo, hi, label):
 
         current_percent = int(frac * 100)
         
-        # أرسل التحديث فقط إذا تغيرت النسبة بـ 1% أو مر نصف ثانية (يمنع تجميد التطبيق)
         if current_percent > last_percent[0] or (now - last_time[0] > 0.5):
             last_percent[0] = current_percent
             last_time[0] = now
-            
             speed = fmt_speed(d.get('speed'))
             text = f'{label} {current_percent}%'
             if speed:
                 text += f' | {speed}'
-                
             report(lo + (hi - lo) * frac, text)
 
     return hook
 
+def make_parallel_hook(stream_type):
+    """تُستخدم لدمج نسب التحميل للصوت والفيديو معاً أثناء التحميل المتوازي"""
+    import yt_dlp
+    last_time = [0.0]
+    last_percent = [0]
+
+    def hook(d):
+        if state['cancel']:
+            raise yt_dlp.utils.DownloadCancelled()
+        if d.get('status') != 'downloading':
+            return
+        
+        now = time.time()
+        total = d.get('total_bytes') or d.get('total_bytes_estimate')
+        done = d.get('downloaded_bytes') or 0
+        
+        if total:
+            frac = min(done / total, 1.0)
+        elif d.get('fragment_count'):
+            frac = min((d.get('fragment_index') or 0) / d['fragment_count'], 1.0)
+        else:
+            frac = 0.0
+
+        # تحديث نسبة هذا المسار فقط (صوت أو فيديو)
+        state[f'{stream_type}_frac'] = frac
+
+        # حساب النسبة الإجمالية: الفيديو يأخذ 75% من الشريط، والصوت 20% (المجموع 95%)
+        v_frac = state.get('video_frac', 0.0)
+        a_frac = state.get('audio_frac', 0.0)
+        total_percent_float = (v_frac * 75.0) + (a_frac * 20.0)
+        current_percent = int(total_percent_float)
+
+        if current_percent > last_percent[0] or (now - last_time[0] > 0.5):
+            last_percent[0] = current_percent
+            last_time[0] = now
+            speed = fmt_speed(d.get('speed'))
+            
+            # نعرض سرعة المسار الذي يرسل التحديث حالياً
+            text = f'Downloading {current_percent}% | {speed}'
+            report(total_percent_float, text)
+
+    return hook
+
 def download_stream(url, fmt, out_path, hook):
-    import yt_dlp # استدعاء ديناميكي لتسريع فتح التطبيق
+    import yt_dlp
     opts = {
         'format': fmt,
         'outtmpl': out_path,
@@ -159,9 +204,8 @@ def download_stream(url, fmt, out_path, hook):
         'nocheckcertificate': True,
         'retries': 10,
         'fragment_retries': 10,
-        # الإضافات السحرية لتسريع التحميل وتخطي قيود يوتيوب
-        'concurrent_fragment_downloads': 5, # تحميل 5 أجزاء في نفس الوقت
-        'http_chunk_size': 10485760,        # تحميل أجزاء بحجم 10 ميجا
+        'concurrent_fragment_downloads': 3,
+        'http_chunk_size': 10485760,
         'socket_timeout': 30,
         'progress_hooks': [hook],
     }
@@ -170,7 +214,6 @@ def download_stream(url, fmt, out_path, hook):
 
 # ------------------------------------------------------------------ main job
 def run_job(job):
-    import yt_dlp # استدعاء ديناميكي
     state['busy'] = True
     state['cancel'] = False
     final_path = None
@@ -188,14 +231,17 @@ def run_job(job):
         report(0, 'Starting...')
 
         if video_id is None and audio_id is not None:
+            # تحميل صوت فقط
             final_path = unique_path(save_dir, title, 'm4a')
             download_stream(url, audio_id, final_path, make_hook(0, 100, 'Downloading audio'))
 
         elif audio_id is None:
+            # تحميل فيديو مدمج جاهز (بدون مسار صوتي منفصل)
             final_path = unique_path(save_dir, title, 'mp4')
             download_stream(url, video_id, final_path, make_hook(0, 100, 'Downloading'))
 
         else:
+            # تحميل الصوت والفيديو (متوازي Concurrent) ثم دمجهما
             if MediaMerger is None:
                 raise RuntimeError(f'MediaMerger not loaded: {MERGER_ERROR}')
 
@@ -206,11 +252,21 @@ def run_job(job):
             audio_tmp = os.path.join(cache_dir, f'{stamp}_audio.tmp.m4a')
             tmp_files = [video_tmp, audio_tmp]
 
-            download_stream(url, video_id, video_tmp, make_hook(0, 75, 'Downloading video'))
-            download_stream(url, audio_id, audio_tmp, make_hook(75, 95, 'Downloading audio'))
+            # تصفير العدادات قبل البدء
+            state['video_frac'] = 0.0
+            state['audio_frac'] = 0.0
 
+            # تحميل الفيديو والصوت في نفس الوقت (يوفر 40-50% من الزمن)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                v_future = executor.submit(download_stream, url, video_id, video_tmp, make_parallel_hook('video'))
+                a_future = executor.submit(download_stream, url, audio_id, audio_tmp, make_parallel_hook('audio'))
+                
+                # الانتظار حتى ينتهي كلاهما. سيقوم برمي خطأ فوراً إذا تم الإلغاء
+                for future in concurrent.futures.as_completed([v_future, a_future]):
+                    future.result()
+
+            # بمجرد انتهاء التحميل المتوازي، نبدأ الدمج
             report(95, 'Merging... (Please wait)')
-            # سيتم الدمج بسرعة إذا كانت الملفات mp4 و m4a
             result = MediaMerger().mergeBlocking(service, video_tmp, audio_tmp, final_path)
             if result != 'SUCCESS':
                 raise RuntimeError(f'Merge Error: {result}')
@@ -221,11 +277,13 @@ def run_job(job):
         send(b'/done', final_path)
 
     except Exception as e:
-        cancelled = state['cancel'] or isinstance(e, yt_dlp.utils.DownloadCancelled)
+        # فحص إذا كان الخطأ هو إلغاء التحميل
+        err_str = str(e)
+        cancelled = state['cancel'] or 'DownloadCancelled' in err_str
         if cancelled:
             send(b'/cancelled', 1)
         else:
-            send(b'/error', str(e))
+            send(b'/error', err_str)
 
     finally:
         remove_quiet(*tmp_files)
@@ -235,6 +293,12 @@ def run_job(job):
         state['cancel'] = False
         state['last_activity'] = time.time()
         state['stop_at'] = time.time() + 2
+        
+        # فصل الخيط عن JVM بأمان لمنع الانهيارات في أندرويد
+        try:
+            detach()
+        except:
+            pass
 
 
 # ------------------------------------------------------------------ OSC handlers
