@@ -348,11 +348,10 @@ class YTDownloaderApp(App):
                 options = {}
                 title = info.get('title') or 'Video'
 
-                # الدمج مسموح ليوتيوب فقط؛ باقي المنصات تحميل مباشر بدون دمج
                 extractor = (info.get('extractor_key') or info.get('extractor') or '').lower()
                 is_youtube = 'youtube' in extractor or 'youtu' in url.lower()
 
-                # 1. تحديد أفضل مسار صوتي من نوع m4a أو أفضل صوت متاح
+                # 1. تحديد أفضل مسار صوتي من نوع m4a (AAC)
                 audio_formats = [f for f in formats if f.get('vcodec') == 'none' and f.get('acodec') != 'none']
                 audio_formats.sort(key=lambda x: x.get('tbr') or x.get('abr') or 0)
 
@@ -360,24 +359,38 @@ class YTDownloaderApp(App):
                 best_audio = m4a_audio[-1] if m4a_audio else (audio_formats[-1] if audio_formats else None)
                 best_audio_id = best_audio['format_id'] if best_audio else None
 
-                # 2. تصفية مسارات الفيديو وحفظ أفضل مسار لكل دقة (1080p, 720p, ...)
+                # 2. تصفية الفيديوهات
                 height_map = {}
                 for f in formats:
-                    vcodec = f.get('vcodec')
+                    vcodec = str(f.get('vcodec', '')).lower()
+                    acodec = f.get('acodec')
                     height = f.get('height')
+
                     if vcodec != 'none' and height and isinstance(height, int):
-                        # غير يوتيوب: نتجاهل الفيديو بدون صوت (لأنه يحتاج دمج)
-                        if not is_youtube and f.get('acodec') == 'none':
+                        # غير يوتيوب: نتجاهل الفيديو بدون صوت
+                        if not is_youtube and acodec == 'none':
                             continue
+
+                        # إذا كان الفيديو بدون صوت (يحتاج دمج)، نضمن أنه بترخيص H.264 (avc1) فقط المتوافق مع أندرويد
+                        if acodec == 'none' and not (vcodec.startswith('avc') or vcodec.startswith('h264')):
+                            continue
+
                         if height not in height_map:
                             height_map[height] = f
                         else:
                             curr = height_map[height]
-                            # إعطاء أولوية لصيغة mp4 أو معدل نقل البت الأعلى
-                            if (f.get('ext') == 'mp4' and curr.get('ext') != 'mp4') or ((f.get('tbr') or 0) > (curr.get('tbr') or 0)):
+                            # إعطاء أولوية للملفات التي تحتوي على صوت جاهز (تتجنب الدمج) أو mp4
+                            curr_has_audio = curr.get('acodec') != 'none'
+                            f_has_audio = acodec != 'none'
+
+                            if f_has_audio and not curr_has_audio:
+                                height_map[height] = f
+                            elif f.get('ext') == 'mp4' and curr.get('ext') != 'mp4':
+                                height_map[height] = f
+                            elif (f.get('tbr') or 0) > (curr.get('tbr') or 0):
                                 height_map[height] = f
 
-                # 3. ترتيب الجودات تنازلياً وإنشاء التسميات النظيفة
+                # 3. ترتيب الجودات وتحديد هل تحتاج دمج أم لا
                 sorted_heights = sorted(height_map.keys(), reverse=True)
                 for h in sorted_heights:
                     f = height_map[h]
@@ -388,16 +401,15 @@ class YTDownloaderApp(App):
                     if h >= 1080: label += " (Full HD)"
                     elif h >= 720: label += " (HD)"
 
+                    # إذا كان الفيديو يحتوي على صوت بالفعل، لا نرسل audio_id (لا يوجد دمج)
                     if acodec != 'none':
                         options[label] = (format_id, None)
                     elif best_audio_id and is_youtube:
                         options[label] = (format_id, best_audio_id)
 
-                # غير يوتيوب ولا توجد صيغة جاهزة بالدقة: أفضل ملف واحد متاح
                 if not is_youtube and not options:
                     options["Best Available"] = ('best', None)
 
-                # تحميل الصوت فقط (إن وُجد مسار صوتي)
                 if best_audio_id:
                     options["Audio Only (M4A)"] = (None, best_audio_id)
 
