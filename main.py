@@ -51,7 +51,7 @@ def load_yt_dlp():
 HOST = '127.0.0.1'
 SERVICE_PORT = 3001   # الخدمة تستمع هنا
 APP_PORT = 3002       # التطبيق يستمع هنا
-SERVICE_CLASS = 'org.myapp.ytdownloader.ServiceDownloader'  # package.domain + package.name + Service + Name
+SERVICE_CLASS = 'org.ahmad.aviro.ServiceDownloader'  # package.domain + package.name + Service + Name
 
 # --- Update check ---
 # غيّرها إلى: اسم-حسابك/اسم-المستودع  (يجب أن يكون المستودع Public)
