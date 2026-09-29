@@ -247,7 +247,7 @@ def show_update_popup(url):
     popup.open()
 
 
-class YTDownloaderApp(App):
+class AviroApp(App):
     def build(self):
         self.title = 'Media Downloader'
         Window.clearcolor = BG_COLOR
@@ -654,4 +654,4 @@ class YTDownloaderApp(App):
 
 
 if __name__ == '__main__':
-    YTDownloaderApp().run()
+    AviroApp().run()
