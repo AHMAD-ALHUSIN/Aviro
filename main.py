@@ -9,6 +9,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
 from kivy.uix.label import Label
+from kivy.uix.popup import Popup
 from kivy.uix.progressbar import ProgressBar
 from kivy.uix.spinner import Spinner, SpinnerOption
 from kivy.uix.widget import Widget
@@ -20,6 +21,12 @@ from kivy.utils import platform, get_color_from_hex
 
 from oscpy.client import OSCClient
 from oscpy.server import OSCThreadServer
+
+# رقم الـ build الحالي (يكتبه الـ workflow تلقائياً)
+try:
+    from build_info import BUILD_NUMBER
+except Exception:
+    BUILD_NUMBER = None
 
 
 try:
@@ -44,6 +51,10 @@ HOST = '127.0.0.1'
 SERVICE_PORT = 3001   # الخدمة تستمع هنا
 APP_PORT = 3002       # التطبيق يستمع هنا
 SERVICE_CLASS = 'org.myapp.ytdownloader.ServiceDownloader'  # package.domain + package.name + Service + Name
+
+# --- Update check ---
+# غيّرها إلى: اسم-حسابك/اسم-المستودع  (يجب أن يكون المستودع Public)
+GITHUB_REPO = 'USERNAME/REPO'
 
 # --- UI Colors ---
 BG_COLOR = get_color_from_hex('#12141A')
@@ -124,6 +135,75 @@ class QualityOption(SpinnerOption):
         self.font_size = sp(16)
         self.size_hint_y = None
         self.height = dp(50)
+
+
+# ------------------------------------------------------------ update check
+def open_url(url):
+    """يفتح الرابط في المتصفح (Intent على أندرويد، وwebbrowser كبديل)."""
+    if platform == 'android':
+        try:
+            from jnius import autoclass
+            Intent = autoclass('android.content.Intent')
+            Uri = autoclass('android.net.Uri')
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            PythonActivity.mActivity.startActivity(intent)
+            return
+        except Exception:
+            pass
+    try:
+        import webbrowser
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
+def check_update(on_update):
+    """يفحص آخر Release في GitHub في الخلفية، ويستدعي on_update(url) فقط إن وُجد إصدار أحدث."""
+    if BUILD_NUMBER is None or not GITHUB_REPO or GITHUB_REPO == 'USERNAME/REPO':
+        return
+
+    def worker():
+        try:
+            import requests   # يُستورد هنا حتى لا يبطئ فتح التطبيق
+            r = requests.get(
+                f'https://api.github.com/repos/{GITHUB_REPO}/releases/latest',
+                timeout=10,
+            )
+            r.raise_for_status()
+            data = r.json()
+            latest = int(str(data['tag_name']).lstrip('vV'))
+            if latest > BUILD_NUMBER:
+                url = data['html_url']
+                Clock.schedule_once(lambda dt: on_update(url))
+        except Exception:
+            pass   # لا نزعج المستخدم إذا فشل الفحص
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def show_update_popup(url):
+    box = BoxLayout(orientation='vertical', spacing=dp(14), padding=dp(16))
+    msg = Label(text='A new version is available.', font_size=sp(16), color=TEXT_COLOR)
+    row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(12))
+    later_btn = RoundedButton(text='Later', font_size=sp(16), bg_color=INPUT_COLOR)
+    update_btn = RoundedButton(text='Update', font_size=sp(16), bold=True, bg_color=ACCENT_COLOR)
+    row.add_widget(later_btn)
+    row.add_widget(update_btn)
+    box.add_widget(msg)
+    box.add_widget(row)
+
+    popup = Popup(title='Update available', title_color=TEXT_COLOR, content=box,
+                  size_hint=(0.85, None), height=dp(200), auto_dismiss=False,
+                  background='', background_color=CARD_COLOR, separator_color=ACCENT_COLOR)
+
+    def go(*_):
+        open_url(url)
+        popup.dismiss()
+
+    later_btn.bind(on_release=lambda *_: popup.dismiss())
+    update_btn.bind(on_release=go)
+    popup.open()
 
 
 class YTDownloaderApp(App):
@@ -215,6 +295,9 @@ class YTDownloaderApp(App):
     def on_start(self):
         # تحميل yt_dlp في الخلفية حتى تظهر الواجهة فوراً
         threading.Thread(target=lambda: load_yt_dlp(), daemon=True).start()
+
+        # فحص وجود تحديث جديد (في الخلفية)
+        check_update(show_update_popup)
 
         # قناة الاتصال مع الخدمة (OSC)
         self.osc = OSCThreadServer(encoding='utf8')
