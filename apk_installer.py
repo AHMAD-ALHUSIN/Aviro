@@ -1,15 +1,4 @@
-"""
-تنزيل APK التحديث وتثبيته من داخل التطبيق (أندرويد فقط).
 
-الطريقة:
-  - التنزيل عبر DownloadManager الخاص بالنظام (يعمل بالخلفية، ويعرض إشعاراً،
-    ولا يحتاج إذن تخزين ولا FileProvider).
-  - بعد اكتمال التنزيل يُفتح مثبّت النظام، ويضغط المستخدم "تحديث/Install" فقط.
-  - يحتاج إذن REQUEST_INSTALL_PACKAGES في buildozer.spec، ويوافق المستخدم مرة واحدة
-    على "التثبيت من هذا التطبيق" (تفتح الدالة request_install_permission شاشة الإعداد).
-
-كل الدوال تُستدعى من الخيط الرئيسي (Kivy) فقط.
-"""
 
 from kivy.clock import Clock
 from jnius import autoclass
@@ -86,32 +75,59 @@ class ApkUpdater:
         self.download_id = self.dm.enqueue(req)
         self._event = Clock.schedule_interval(self._poll, 1)
 
-    def _poll(self, dt):
+
+
+   def _poll(self, dt):
         try:
             DM = autoclass('android.app.DownloadManager')
             Query = autoclass('android.app.DownloadManager$Query')
-            cursor = self.dm.query(Query().setFilterById([self.download_id]))
+            
+            # إصلاح: تمرير download_id مباشرة دون أقواس مصفوفة []
+            cursor = self.dm.query(Query().setFilterById(self.download_id))
+            
+            if not cursor:
+                return  # انتظر الدورة القادمة
+
             try:
+                # إصلاح مهم جداً: إذا لم يجد السجل بعد، ننتظر بدلاً من استدعاء _fail فوراً
                 if not cursor.moveToFirst():
-                    return self._fail('Download was removed.')
+                    return 
+
                 status = cursor.getInt(cursor.getColumnIndex(DM.COLUMN_STATUS))
                 done = cursor.getLong(cursor.getColumnIndex(DM.COLUMN_BYTES_DOWNLOADED_SO_FAR))
                 total = cursor.getLong(cursor.getColumnIndex(DM.COLUMN_TOTAL_SIZE_BYTES))
+                
+                # جلب كود سبب الفشل من أندرويد لمعرفته بدقة
+                reason_idx = cursor.getColumnIndex(DM.COLUMN_REASON)
+                reason = cursor.getInt(reason_idx) if reason_idx != -1 else -1
             finally:
                 cursor.close()
 
+            # 1. اكتمل التنزيل بنجاح
             if status == DM.STATUS_SUCCESSFUL:
                 self._stop_timer()
                 self.apk_uri = self.dm.getUriForDownloadedFile(self.download_id)
                 self.on_ready()
                 self.install()
+
+            # 2. فشل التنزيل من نظام أندرويد
             elif status == DM.STATUS_FAILED:
-                self._fail('Download failed.')
+                self._fail(f'Download failed (Android Code: {reason})')
+
+            # 3. التنزيل متوقف مؤقتاً (بانتظار شبكة Wi-Fi أو استقرار الاتصال)
             elif status == DM.STATUS_PAUSED:
                 self.on_progress(0.0, 'Waiting for network...')
+
+            # 4. التنزيل مستمر (سواء STATUS_RUNNING أو STATUS_PENDING)
             else:
-                pct = (done * 100.0 / total) if total and total > 0 else 0.0
-                self.on_progress(pct, f'Downloading {int(pct)}%')
+                done_mb = done / (1024 * 1024)
+                if total and total > 0:
+                    total_mb = total / (1024 * 1024)
+                    pct = (done * 100.0) / total
+                    self.on_progress(pct, f'Downloading {int(pct)}% ({done_mb:.1f}/{total_mb:.1f} MB)')
+                else:
+                    self.on_progress(0.0, f'Downloading {done_mb:.1f} MB...')
+
         except Exception as e:
             self._fail(str(e) or 'Download error.')
 
