@@ -6,8 +6,12 @@ package.domain = org.myapp
 source.dir = .
 
 source.include_exts = py, png, jpg, kv, atlas
+source.exclude_dirs = .git, .github, bin, .buildozer
 
+# الاسم الظاهر للمستخدم: غيّره يدوياً عند كل إصدار مهم
 version = 0.2
+# رقم الإصدار الداخلي: يستبدله الـ workflow تلقائياً برقم الـ build
+android.numeric_version = 1
 
 # oscpy للتواصل بين التطبيق والخدمة
 requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.2.1,pillow,yt-dlp,certifi,idna,urllib3,requests,pyjnius,oscpy
@@ -26,6 +30,10 @@ android.build_tools_version = 34.0.0
 android.ndk = 25c
 android.archs = arm64-v8a
 android.allow_backup = True
+
+# نوع الملف الناتج
+android.release_artifact = apk
+android.debug_artifact = apk
 
 # خدمة التنزيل (تعمل كـ Foreground Service)
 services = downloader:service.py:foreground
