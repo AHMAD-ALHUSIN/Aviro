@@ -1,5 +1,3 @@
-
-
 from kivy.clock import Clock
 from jnius import autoclass
 
@@ -75,59 +73,32 @@ class ApkUpdater:
         self.download_id = self.dm.enqueue(req)
         self._event = Clock.schedule_interval(self._poll, 1)
 
-
-
-   def _poll(self, dt):
+    def _poll(self, dt):
         try:
             DM = autoclass('android.app.DownloadManager')
             Query = autoclass('android.app.DownloadManager$Query')
-            
-            # إصلاح: تمرير download_id مباشرة دون أقواس مصفوفة []
-            cursor = self.dm.query(Query().setFilterById(self.download_id))
-            
-            if not cursor:
-                return  # انتظر الدورة القادمة
-
+            cursor = self.dm.query(Query().setFilterById([self.download_id]))
             try:
-                # إصلاح مهم جداً: إذا لم يجد السجل بعد، ننتظر بدلاً من استدعاء _fail فوراً
                 if not cursor.moveToFirst():
-                    return 
-
+                    return self._fail('Download was removed.')
                 status = cursor.getInt(cursor.getColumnIndex(DM.COLUMN_STATUS))
                 done = cursor.getLong(cursor.getColumnIndex(DM.COLUMN_BYTES_DOWNLOADED_SO_FAR))
                 total = cursor.getLong(cursor.getColumnIndex(DM.COLUMN_TOTAL_SIZE_BYTES))
-                
-                # جلب كود سبب الفشل من أندرويد لمعرفته بدقة
-                reason_idx = cursor.getColumnIndex(DM.COLUMN_REASON)
-                reason = cursor.getInt(reason_idx) if reason_idx != -1 else -1
             finally:
                 cursor.close()
 
-            # 1. اكتمل التنزيل بنجاح
             if status == DM.STATUS_SUCCESSFUL:
                 self._stop_timer()
                 self.apk_uri = self.dm.getUriForDownloadedFile(self.download_id)
                 self.on_ready()
                 self.install()
-
-            # 2. فشل التنزيل من نظام أندرويد
             elif status == DM.STATUS_FAILED:
-                self._fail(f'Download failed (Android Code: {reason})')
-
-            # 3. التنزيل متوقف مؤقتاً (بانتظار شبكة Wi-Fi أو استقرار الاتصال)
+                self._fail('Download failed.')
             elif status == DM.STATUS_PAUSED:
                 self.on_progress(0.0, 'Waiting for network...')
-
-            # 4. التنزيل مستمر (سواء STATUS_RUNNING أو STATUS_PENDING)
             else:
-                done_mb = done / (1024 * 1024)
-                if total and total > 0:
-                    total_mb = total / (1024 * 1024)
-                    pct = (done * 100.0) / total
-                    self.on_progress(pct, f'Downloading {int(pct)}% ({done_mb:.1f}/{total_mb:.1f} MB)')
-                else:
-                    self.on_progress(0.0, f'Downloading {done_mb:.1f} MB...')
-
+                pct = (done * 100.0 / total) if total and total > 0 else 0.0
+                self.on_progress(pct, f'Downloading {int(pct)}%')
         except Exception as e:
             self._fail(str(e) or 'Download error.')
 
