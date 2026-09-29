@@ -36,7 +36,7 @@ MediaScannerConnection = autoclass('android.media.MediaScannerConnection')
 service = PythonService.mService
 
 try:
-    MediaMerger = autoclass('org.myapp.MediaMerger')
+    MediaMerger = autoclass('org.ahmad.aviro.MediaMerger')
     MERGER_ERROR = None
 except Exception as e:
     MediaMerger = None
