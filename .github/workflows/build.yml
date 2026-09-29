@@ -74,6 +74,9 @@ jobs:
           sed -i -E "s/^android\.numeric_version.*/android.numeric_version = ${{ github.run_number }}/" buildozer.spec
           grep -n "^version\|numeric_version" buildozer.spec
 
+      - name: Set build number in app
+        run: echo "BUILD_NUMBER = ${{ github.run_number }}" > build_info.py      
+
       - name: Build signed release APK
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
