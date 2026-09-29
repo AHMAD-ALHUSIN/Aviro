@@ -9,7 +9,9 @@ from jnius import autoclass, detach
 from oscpy.client import OSCClient
 from oscpy.server import OSCThreadServer
 
-# استخدام شهادات certifi إن وُجدت بدل تعطيل التحقق من الشهادات
+# استخدام شهادات certifi إن وُجدت بدل تعطيل التحقق من الشهادات.
+# ملاحظة: يجب إضافة "certifi" إلى requirements في buildozer.spec وإلا
+# فلن يتم استيرادها وسيُستخدم مخزن الشهادات الافتراضي (وقد يفشل على أندرويد).
 try:
     import certifi
     os.environ.setdefault('SSL_CERT_FILE', certifi.where())
@@ -25,7 +27,8 @@ IDLE_TIMEOUT = 60
 DOWNLOAD_END = 92.0
 MERGE_END = 99.0
 
-# اجعلها True فقط إذا ظهرت لك أخطاء SSL على جهاز معين
+# اجعلها True فقط إذا ظهرت لك أخطاء SSL متكررة على جهاز معين
+# (غالباً بسبب عدم تضمين certifi في buildozer.spec requirements)
 ALLOW_INSECURE_SSL = False
 
 # استخراج معلومات الفيديو مرة واحدة وإعادة استخدامها للصوت والفيديو (يوفر عدة ثوانٍ)
@@ -317,17 +320,31 @@ def base_opts(fmt, out_path=None, hook=None):
     return opts
 
 
-def fetch_info(url, fmt):
-    """استخراج المعلومات مرة واحدة فقط. عند الفشل نعود للطريقة العادية."""
+def fetch_info(url):
+    """استخراج معلومات الفيديو مرة واحدة فقط، بدون تقييد الصيغة (حتى تبقى
+    قائمة الصيغ كاملة لإعادة استخدامها لكل من الفيديو والصوت لاحقاً)، وبدون
+    sanitize_info لأنها مخصصة فقط لتصدير JSON وتحذف حقولاً داخلية يحتاجها
+    yt-dlp لإعادة الاستخدام عند التحميل الفعلي (كانت تسبب إعادة استخراج
+    صامتة من الشبكة، وهذا هو سبب بطء بدء التحميل سابقاً)."""
     if not REUSE_INFO:
         return None
     yt_dlp = get_ytdlp()
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'noprogress': True,
+        'noplaylist': True,
+        'logger': YTDLogger(),
+        'nocheckcertificate': ALLOW_INSECURE_SSL,
+        'retries': 10,
+        'socket_timeout': 30,
+    }
     try:
-        with yt_dlp.YoutubeDL(base_opts(fmt)) as ydl:
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             if not info or info.get('_type') not in (None, 'video'):
                 return None
-            return yt_dlp.YoutubeDL.sanitize_info(info, remove_private_keys=True)
+            return info
     except Exception as e:
         if is_cancel_exc(e):
             raise
@@ -338,9 +355,15 @@ def download_stream(info, url, fmt, out_path, hook):
     yt_dlp = get_ytdlp()
     with yt_dlp.YoutubeDL(base_opts(fmt, out_path, hook)) as ydl:
         if info is not None:
-            ydl.process_ie_result(copy.deepcopy(info), download=True)
-        else:
-            ydl.download([url])
+            try:
+                ydl.process_ie_result(copy.deepcopy(info), download=True)
+                return
+            except Exception as e:
+                if is_cancel_exc(e):
+                    raise
+                # فشل استخدام المعلومات المخبأة (مثلاً روابط الصيغة انتهت
+                # صلاحيتها): لا تُفشل المهمة، ارجع للاستخراج المباشر.
+        ydl.download([url])
 
 
 def download_worker(*args):
@@ -401,9 +424,9 @@ def run_job(job):
         if need_merge and MediaMerger is None:
             raise RuntimeError(f'MediaMerger not loaded: {MERGER_ERROR}')
 
-        # استخراج المعلومات مرة واحدة
+        # استخراج المعلومات مرة واحدة (بلا تقييد صيغة، بلا sanitize)
         report(0, 'Preparing...')
-        info = fetch_info(url, video_id or audio_id)
+        info = fetch_info(url)
         if state['user_cancel']:
             raise JobCancelled()
 
