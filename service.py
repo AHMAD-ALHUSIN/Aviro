@@ -79,8 +79,8 @@ class YTDLogger:
 
 # ------------------------------------------------------------------ helpers
 def get_ytdlp():
-    import yt_dlp
-    return yt_dlp
+    from ytdlp_updater import import_yt_dlp
+    return import_yt_dlp()
 
 
 def safe_detach():
