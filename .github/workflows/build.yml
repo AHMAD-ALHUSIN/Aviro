@@ -5,9 +5,17 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: write   # لازم لإنشاء GitHub Release
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -28,6 +36,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "cython>=0.29.36,<3" buildozer
 
+      # كاش لتسريع البناء (SDK / NDK / python-for-android)
+      - name: Cache Buildozer global dir
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: buildozer-global-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-global-
+
       - name: Accept Android SDK Licenses
         run: |
           mkdir -p ~/.android
@@ -41,38 +57,51 @@ jobs:
             ls -lh ./ffmpeg
           fi
 
-      - name: Show repo layout and spec
+      # ---------- التوقيع ----------
+      - name: Decode keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
         run: |
-          echo "=== java folder ==="
-          find . -path ./.git -prune -o -ipath "*mediamerger*" -print
-          echo "=== spec add_src ==="
-          grep -n "add_src\|include_exts\|source.dir" buildozer.spec || true
-          echo "=== package line ==="
-          head -5 java/org/myapp/MediaMerger.java || true
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Secret KEYSTORE_B64 is missing"
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/aviro.keystore"
 
-      - name: Build APK with Buildozer
+      # ---------- رقم الإصدار يزيد تلقائياً مع كل build ----------
+      - name: Set version code
+        run: |
+          sed -i -E "s/^android\.numeric_version.*/android.numeric_version = ${{ github.run_number }}/" buildozer.spec
+          grep -n "^version\|numeric_version" buildozer.spec
+
+      - name: Build signed release APK
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
           ANDROID_NDK_HOME: ""
           ANDROID_NDK_ROOT: ""
+          P4A_RELEASE_KEYSTORE: ${{ runner.temp }}/aviro.keystore
+          P4A_RELEASE_KEYSTORE_PASSWD: ${{ secrets.KEYSTORE_PASS }}
+          P4A_RELEASE_KEYALIAS: ${{ secrets.KEY_ALIAS }}
+          P4A_RELEASE_KEYALIAS_PASSWD: ${{ secrets.KEY_PASS }}
         run: |
-          yes | buildozer -v android debug 2>&1 | tee build.log
+          yes | buildozer -v android release 2>&1 | tee build.log
 
-      - name: Check Java file was copied
-        if: always()
+      - name: Verify APK signature
         run: |
-          echo "=== Java source in build dir ==="
-          find .buildozer -iname "MediaMerger*" || echo "NOT FOUND"
-          echo "=== log mentions ==="
-          grep -n -i "mediamerger\|add_src\|javac" build.log | head -40 || true
+          APK=$(ls bin/*.apk | head -1)
+          APKSIGNER=$(find ~/.buildozer -name apksigner -type f | head -1)
+          echo "APK: $APK"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | head -15
+          # نسخة باسم ثابت للتحميل / التحديث
+          cp "$APK" bin/Aviro.apk
 
       - name: Check class inside APK
         if: always()
         run: |
           mkdir -p apk_out
-          unzip -o bin/*.apk 'classes*.dex' -d apk_out
+          unzip -o "$(ls bin/*.apk | head -1)" 'classes*.dex' -d apk_out || true
           for f in apk_out/classes*.dex; do
-            strings "$f" | grep "Lorg/myapp/MediaMerger;" && echo "FOUND in $f"
+            strings "$f" | grep -q "Lorg/myapp/MediaMerger;" && echo "MediaMerger FOUND in $f"
           done || true
 
       - name: Upload build log
@@ -86,4 +115,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: YTDownloader-APK
-          path: bin/*.apk
+          path: bin/Aviro.apk
+
+      # ---------- نشر Release (مفيد للتحديث من داخل التطبيق لاحقاً) ----------
+      - name: Publish GitHub Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Aviro build ${{ github.run_number }}
+          files: bin/Aviro.apk
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/aviro.keystore"
