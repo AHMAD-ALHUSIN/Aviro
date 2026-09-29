@@ -9,7 +9,7 @@ source.include_exts = py, png, jpg, kv, atlas
 source.exclude_dirs = .git, .github, bin, .buildozer
 
 # الاسم الظاهر للمستخدم: غيّره يدوياً عند كل إصدار مهم
-version = 0.2
+version = 0.3
 # رقم الإصدار الداخلي: يستبدله الـ workflow تلقائياً برقم الـ build
 android.numeric_version = 1
 
