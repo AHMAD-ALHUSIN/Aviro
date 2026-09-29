@@ -69,13 +69,12 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/aviro.keystore"
 
       # ---------- رقم الإصدار يزيد تلقائياً مع كل build ----------
-      - name: Set version code
+      - name: Set version numbers
         run: |
           sed -i -E "s/^android\.numeric_version.*/android.numeric_version = ${{ github.run_number }}/" buildozer.spec
+          echo "BUILD_NUMBER = ${{ github.run_number }}" > build_info.py
           grep -n "^version\|numeric_version" buildozer.spec
-
-      - name: Set build number in app
-        run: echo "BUILD_NUMBER = ${{ github.run_number }}" > build_info.py      
+          cat build_info.py
 
       - name: Build signed release APK
         env:
@@ -91,8 +90,17 @@ jobs:
 
       - name: Verify APK signature
         run: |
-          APK=$(ls bin/*.apk | head -1)
+          ls -lh bin/
+          APK=$(ls bin/*release*.apk 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::No release APK found in bin/"
+            exit 1
+          fi
           APKSIGNER=$(find ~/.buildozer -name apksigner -type f | head -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found"
+            exit 1
+          fi
           echo "APK: $APK"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | head -15
           # نسخة باسم ثابت للتحميل / التحديث
@@ -101,8 +109,9 @@ jobs:
       - name: Check class inside APK
         if: always()
         run: |
+          [ -f bin/Aviro.apk ] || exit 0
           mkdir -p apk_out
-          unzip -o "$(ls bin/*.apk | head -1)" 'classes*.dex' -d apk_out || true
+          unzip -o bin/Aviro.apk 'classes*.dex' -d apk_out || true
           for f in apk_out/classes*.dex; do
             strings "$f" | grep -q "Lorg/myapp/MediaMerger;" && echo "MediaMerger FOUND in $f"
           done || true
@@ -120,7 +129,7 @@ jobs:
           name: YTDownloader-APK
           path: bin/Aviro.apk
 
-      # ---------- نشر Release (مفيد للتحديث من داخل التطبيق لاحقاً) ----------
+      # ---------- نشر Release (يستخدمه التطبيق للتحقق من وجود تحديث) ----------
       - name: Publish GitHub Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
@@ -128,6 +137,8 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: Aviro build ${{ github.run_number }}
           files: bin/Aviro.apk
+          fail_on_unmatched_files: true
+          make_latest: true
 
       - name: Remove keystore
         if: always()
