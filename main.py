@@ -22,6 +22,8 @@ from kivy.utils import platform, get_color_from_hex
 from oscpy.client import OSCClient
 from oscpy.server import OSCThreadServer
 
+from ytdlp_updater import import_yt_dlp, update_async
+
 # رقم الـ build الحالي (يكتبه الـ workflow تلقائياً)
 try:
     from build_info import BUILD_NUMBER
@@ -42,8 +44,7 @@ yt_dlp = None
 def load_yt_dlp():
     global yt_dlp
     if yt_dlp is None:
-        import yt_dlp as _yt_dlp
-        yt_dlp = _yt_dlp
+        yt_dlp = import_yt_dlp()
     return yt_dlp
 
 # --- IPC with the download service ---
@@ -293,8 +294,11 @@ class YTDownloaderApp(App):
 
     # ------------------------------------------------------------ lifecycle
     def on_start(self):
-        # تحميل yt_dlp في الخلفية حتى تظهر الواجهة فوراً
-        threading.Thread(target=lambda: load_yt_dlp(), daemon=True).start()
+        # تحميل yt_dlp في الخلفية حتى تظهر الواجهة فوراً، ثم فحص تحديث المكتبة
+        def _bg_init():
+            load_yt_dlp()
+            update_async()   # يسري التحديث عند التشغيل التالي
+        threading.Thread(target=_bg_init, daemon=True).start()
 
         # فحص وجود تحديث جديد (في الخلفية)
         check_update(show_update_popup)
