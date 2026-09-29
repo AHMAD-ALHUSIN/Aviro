@@ -184,8 +184,14 @@ def check_update(on_update):
 
 
 def show_update_popup(url):
+    """url = صفحة الـ Release (بديل إذا تعذّر التنزيل المباشر)."""
+    apk_url = f'https://github.com/{GITHUB_REPO}/releases/latest/download/Aviro.apk'
+    holder = {'mode': 'download', 'updater': None}   # download | install | browser
+
     box = BoxLayout(orientation='vertical', spacing=dp(14), padding=dp(16))
-    msg = Label(text='A new version is available.', font_size=sp(16), color=TEXT_COLOR)
+    msg = Label(text='A new version is available.', font_size=sp(16), color=TEXT_COLOR,
+                halign='center', valign='middle')
+    msg.bind(size=lambda inst, size: setattr(inst, 'text_size', (size[0], None)))
     row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(12))
     later_btn = RoundedButton(text='Later', font_size=sp(16), bg_color=INPUT_COLOR)
     update_btn = RoundedButton(text='Update', font_size=sp(16), bold=True, bg_color=ACCENT_COLOR)
@@ -195,12 +201,46 @@ def show_update_popup(url):
     box.add_widget(row)
 
     popup = Popup(title='Update available', title_color=TEXT_COLOR, content=box,
-                  size_hint=(0.85, None), height=dp(200), auto_dismiss=False,
+                  size_hint=(0.85, None), height=dp(230), auto_dismiss=False,
                   background='', background_color=CARD_COLOR, separator_color=ACCENT_COLOR)
 
+    def on_progress(percent, text):
+        msg.text = text
+
+    def on_ready():
+        holder['mode'] = 'install'
+        msg.text = 'Download complete. Tap Install to finish.'
+        update_btn.text = 'Install'
+        update_btn.disabled = False
+
+    def on_error(err):
+        # نرجع لفتح صفحة التحميل في المتصفح
+        holder['mode'] = 'browser'
+        msg.text = 'Could not update automatically. Tap Open to download it manually.'
+        update_btn.text = 'Open'
+        update_btn.disabled = False
+
     def go(*_):
-        open_url(url)
-        popup.dismiss()
+        mode = holder['mode']
+        if platform != 'android' or mode == 'browser':
+            open_url(url)
+            popup.dismiss()
+            return
+        if mode == 'install':
+            holder['updater'].install()
+            return
+        try:
+            from apk_installer import ApkUpdater, can_install, request_install_permission
+            if not can_install():
+                request_install_permission()
+                msg.text = 'Allow installs from this app in Settings, come back, then tap Update again.'
+                return
+            update_btn.disabled = True
+            msg.text = 'Downloading 0%'
+            holder['updater'] = ApkUpdater(on_progress, on_ready, on_error)
+            holder['updater'].start(apk_url)
+        except Exception:
+            on_error('')
 
     later_btn.bind(on_release=lambda *_: popup.dismiss())
     update_btn.bind(on_release=go)
