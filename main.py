@@ -55,7 +55,7 @@ SERVICE_CLASS = 'org.myapp.ytdownloader.ServiceDownloader'  # package.domain + p
 
 # --- Update check ---
 # غيّرها إلى: اسم-حسابك/اسم-المستودع  (يجب أن يكون المستودع Public)
-GITHUB_REPO = 'AHMAD-ALHUSIN/my_downloader_app'
+GITHUB_REPO = 'AHMAD-ALHUSIN/Aviro'
 
 # --- UI Colors ---
 BG_COLOR = get_color_from_hex('#12141A')
