@@ -1,1 +1,1 @@
--keep class org.myapp.MediaMerger { *; }
+-keep class org.ahmad.aviro.MediaMerger { *; }
