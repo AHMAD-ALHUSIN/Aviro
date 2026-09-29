@@ -9,9 +9,6 @@ from jnius import autoclass, detach
 from oscpy.client import OSCClient
 from oscpy.server import OSCThreadServer
 
-# استخدام شهادات certifi إن وُجدت بدل تعطيل التحقق من الشهادات.
-# ملاحظة: يجب إضافة "certifi" إلى requirements في buildozer.spec وإلا
-# فلن يتم استيرادها وسيُستخدم مخزن الشهادات الافتراضي (وقد يفشل على أندرويد).
 try:
     import certifi
     os.environ.setdefault('SSL_CERT_FILE', certifi.where())
@@ -27,14 +24,10 @@ IDLE_TIMEOUT = 60
 DOWNLOAD_END = 92.0
 MERGE_END = 99.0
 
-# اجعلها True فقط إذا ظهرت لك أخطاء SSL متكررة على جهاز معين
-# (غالباً بسبب عدم تضمين certifi في buildozer.spec requirements)
 ALLOW_INSECURE_SSL = False
 
-# استخراج معلومات الفيديو مرة واحدة وإعادة استخدامها للصوت والفيديو (يوفر عدة ثوانٍ)
 REUSE_INFO = True
 
-# أقل مساحة حرة (بايت) لاستخدام الذاكرة الداخلية للملفات المؤقتة
 MIN_FREE_INTERNAL = 1024 * 1024 * 1024
 
 PythonService = autoclass('org.kivy.android.PythonService')
