@@ -1,8 +1,8 @@
 [app]
 
 title = Aviro
-package.name = ytdownloader
-package.domain = org.myapp
+package.name = aviro
+package.domain = org.ahmad
 source.dir = .
 
 source.include_exts = py, png, jpg, kv, atlas
