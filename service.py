@@ -20,15 +20,24 @@ SERVICE_PORT = 3001
 APP_PORT = 3002
 IDLE_TIMEOUT = 60
 
-# نهاية شريط التحميل عندما يلزم دمج (الباقي للدمج)
-DOWNLOAD_END = 92.0
-MERGE_END = 99.0
+# مراحل شريط التقدم
+# مع دمج:    تحميل 0..90 -> دمج 90..96 -> حفظ 96..99.5
+# بدون دمج:  تحميل 0..95 -> حفظ 95..99.5
+DOWNLOAD_END = 90.0
+SINGLE_END = 95.0
+MERGE_END = 96.0
+SAVE_END = 99.5
 
 ALLOW_INSECURE_SSL = False
-
 REUSE_INFO = True
 
+# yt-dlp
+CONCURRENT_FRAGMENTS = 4        # خفّضه إلى 2 إذا ظهر 403/429
+HTTP_CHUNK_SIZE = 10485760      # جرّب رفعه أو حذفه وقِس الفرق
+
 MIN_FREE_INTERNAL = 1024 * 1024 * 1024
+COPY_CHUNK = 8 * 1024 * 1024    # حجم buffer النقل إلى Downloads
+SPACE_MARGIN = 50 * 1024 * 1024
 
 PythonService = autoclass('org.kivy.android.PythonService')
 Environment = autoclass('android.os.Environment')
@@ -95,6 +104,45 @@ def report(percent, text):
     state['percent'] = float(percent)
     state['text'] = text
     send(b'/progress', float(percent), text)
+
+
+TIMING_LOG_NAME = 'aviro_timing.log'
+TIMING_LOG_MAX = 256 * 1024   # يُعاد إنشاء الملف إذا تجاوز 256KB
+
+
+def log_timing(line):
+    """يطبع السطر (Logcat) ويضيفه إلى ملف aviro_timing.log في مجلد Downloads."""
+    print(line)
+    try:
+        path = os.path.join(get_save_dir(), TIMING_LOG_NAME)
+        if os.path.exists(path) and os.path.getsize(path) > TIMING_LOG_MAX:
+            os.remove(path)
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(line + '\n')
+    except Exception:
+        pass
+
+
+def fmt_size(path):
+    try:
+        return f'{os.path.getsize(path) / (1024 * 1024):.1f}MB'
+    except Exception:
+        return '?'
+
+
+class Stopwatch:
+    """يقيس زمن كل مرحلة ويسجله: [timing] merge: 3.2s"""
+
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self.t = time.time()
+        return self
+
+    def __exit__(self, *exc):
+        log_timing(f'[timing] {self.name}: {time.time() - self.t:.1f}s')
+        return False
 
 
 def is_cancelled():
@@ -216,6 +264,52 @@ def scan_file(path):
         pass
 
 
+# ------------------------------------------------------------------ move
+def move_to_final(src, dst, start_pct, end_pct):
+    """ينقل ملفاً مؤقتاً داخلياً إلى مساره النهائي بنسخ تسلسلي بـ buffer كبير.
+    يكتب إلى dst.part ثم يعيد التسمية، فلا يظهر ملف ناقص أبداً."""
+    report(start_pct, 'Saving 0%')
+
+    # نفس نظام الملفات؟ إعادة تسمية فورية
+    try:
+        os.rename(src, dst)
+        return
+    except OSError:
+        pass
+
+    total = os.path.getsize(src)
+    dst_dir = os.path.dirname(dst) or '.'
+    if free_bytes(dst_dir) < total + SPACE_MARGIN:
+        remove_quiet(src)
+        raise RuntimeError('Not enough storage space to save the file.')
+
+    part = dst + '.part'
+    buf = bytearray(COPY_CHUNK)
+    view = memoryview(buf)
+    done = 0
+    last_pct = -1
+    try:
+        with open(src, 'rb') as fi, open(part, 'wb') as fo:
+            while True:
+                if state['user_cancel']:
+                    raise JobCancelled()
+                n = fi.readinto(buf)
+                if not n:
+                    break
+                fo.write(view[:n])
+                done += n
+                pct = int(done * 100 / total) if total else 100
+                if pct != last_pct:
+                    last_pct = pct
+                    report(start_pct + (end_pct - start_pct) * pct / 100.0, f'Saving {pct}%')
+        os.replace(part, dst)
+    except BaseException:
+        remove_quiet(part)
+        raise
+    finally:
+        remove_quiet(src)
+
+
 # ------------------------------------------------------------------ progress
 class ProgressTracker:
     """يجمع تقدم عدة مسارات تحميل بالوزن الفعلي (بالبايت) بدل نسب ثابتة."""
@@ -300,12 +394,13 @@ def base_opts(fmt, out_path=None, hook=None):
         'nocheckcertificate': ALLOW_INSECURE_SSL,
         'retries': 10,
         'fragment_retries': 10,
-        'concurrent_fragment_downloads': 4,
-        'http_chunk_size': 10485760,
+        'concurrent_fragment_downloads': CONCURRENT_FRAGMENTS,
         'buffersize': 65536,
         'socket_timeout': 30,
         'updatetime': False,
     }
+    if HTTP_CHUNK_SIZE:
+        opts['http_chunk_size'] = HTTP_CHUNK_SIZE
     if out_path:
         opts['outtmpl'] = out_path
     if hook:
@@ -315,10 +410,8 @@ def base_opts(fmt, out_path=None, hook=None):
 
 def fetch_info(url):
     """استخراج معلومات الفيديو مرة واحدة فقط، بدون تقييد الصيغة (حتى تبقى
-    قائمة الصيغ كاملة لإعادة استخدامها لكل من الفيديو والصوت لاحقاً)، وبدون
-    sanitize_info لأنها مخصصة فقط لتصدير JSON وتحذف حقولاً داخلية يحتاجها
-    yt-dlp لإعادة الاستخدام عند التحميل الفعلي (كانت تسبب إعادة استخراج
-    صامتة من الشبكة، وهذا هو سبب بطء بدء التحميل سابقاً)."""
+    قائمة الصيغ كاملة لإعادة استخدامها للفيديو والصوت)، وبدون sanitize_info
+    لأنها تحذف حقولاً داخلية يحتاجها yt-dlp عند التحميل الفعلي."""
     if not REUSE_INFO:
         return None
     yt_dlp = get_ytdlp()
@@ -354,8 +447,8 @@ def download_stream(info, url, fmt, out_path, hook):
             except Exception as e:
                 if is_cancel_exc(e):
                     raise
-                # فشل استخدام المعلومات المخبأة (مثلاً روابط الصيغة انتهت
-                # صلاحيتها): لا تُفشل المهمة، ارجع للاستخراج المباشر.
+                # فشل استخدام المعلومات المخبأة (مثلاً انتهت صلاحية الروابط):
+                # لا تُفشل المهمة، ارجع للاستخراج المباشر.
         ydl.download([url])
 
 
@@ -367,14 +460,14 @@ def download_worker(*args):
 
 
 # ------------------------------------------------------------------ merge
-def run_merge(video_tmp, audio_tmp, final_path):
+def run_merge(video_tmp, audio_tmp, out_path):
     merger = MediaMerger()
     state['merger'] = merger
     stop = threading.Event()
 
     def poll():
         try:
-            while not stop.wait(0.3):
+            while not stop.wait(0.4):
                 try:
                     p = int(merger.getProgress())
                 except Exception:
@@ -387,7 +480,12 @@ def run_merge(video_tmp, audio_tmp, final_path):
     t.start()
     try:
         report(DOWNLOAD_END, 'Merging 0%')
-        return str(merger.mergeBlocking(service, video_tmp, audio_tmp, final_path))
+        res = str(merger.mergeBlocking(service, video_tmp, audio_tmp, out_path))
+        try:
+            log_timing('[timing] java: ' + str(merger.getLastTimings()))
+        except Exception:
+            pass
+        return res
     finally:
         stop.set()
         t.join(1.0)
@@ -417,53 +515,87 @@ def run_job(job):
         if need_merge and MediaMerger is None:
             raise RuntimeError(f'MediaMerger not loaded: {MERGER_ERROR}')
 
-        # استخراج المعلومات مرة واحدة (بلا تقييد صيغة، بلا sanitize)
+        # استخراج المعلومات مرة واحدة
         report(0, 'Preparing...')
-        info = fetch_info(url)
+        with Stopwatch('fetch_info'):
+            info = fetch_info(url)
         if state['user_cancel']:
             raise JobCancelled()
 
+        stamp = int(time.time() * 1000)
+        temp_dir = get_temp_dir()
+        log_timing(
+            f'--- {time.strftime("%Y-%m-%d %H:%M:%S")} | {title} | '
+            f'{"merge" if need_merge else "single"} | temp={temp_dir}'
+        )
+
         if not need_merge:
-            # صوت فقط أو فيديو جاهز (مدمج)
+            # صوت فقط أو فيديو جاهز (مدمج): حمّل داخلياً ثم انقل
             audio_only = video_id is None
             fmt = audio_id if audio_only else video_id
-            final_path = unique_path(save_dir, title, 'm4a' if audio_only else 'mp4')
+            ext = 'm4a' if audio_only else 'mp4'
+            final_path = unique_path(save_dir, title, ext)
+            single_tmp = os.path.join(temp_dir, f'{stamp}_single.tmp.{ext}')
+            tmp_files = [single_tmp, single_tmp + '.part']
+
             label = 'Downloading audio' if audio_only else 'Downloading'
-            tracker = ProgressTracker(('main',), label, 100.0)
-            download_stream(info, url, fmt, final_path, make_hook(tracker, 'main'))
+            tracker = ProgressTracker(('main',), label, SINGLE_END)
+            with Stopwatch('download'):
+                download_stream(info, url, fmt, single_tmp, make_hook(tracker, 'main'))
+            if state['user_cancel']:
+                raise JobCancelled()
+            if not os.path.exists(single_tmp) or os.path.getsize(single_tmp) == 0:
+                raise RuntimeError('Downloaded file is missing or empty.')
+
+            with Stopwatch('move'):
+                move_to_final(single_tmp, final_path, SINGLE_END, SAVE_END)
         else:
             final_path = unique_path(save_dir, title, 'mp4')
-            stamp = int(time.time() * 1000)
-            temp_dir = get_temp_dir()
             video_tmp = os.path.join(temp_dir, f'{stamp}_video.tmp.mp4')
             audio_tmp = os.path.join(temp_dir, f'{stamp}_audio.tmp.m4a')
-            tmp_files = [video_tmp, audio_tmp, video_tmp + '.part', audio_tmp + '.part']
+            merged_tmp = os.path.join(temp_dir, f'{stamp}_merged.tmp.mp4')
+            tmp_files = [video_tmp, audio_tmp, merged_tmp,
+                         video_tmp + '.part', audio_tmp + '.part']
 
             tracker = ProgressTracker(('video', 'audio'), 'Downloading', DOWNLOAD_END)
             real_err = None
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                futures = [
-                    executor.submit(download_worker, info, url, video_id, video_tmp, make_hook(tracker, 'video')),
-                    executor.submit(download_worker, info, url, audio_id, audio_tmp, make_hook(tracker, 'audio')),
-                ]
-                for f in concurrent.futures.as_completed(futures):
-                    try:
-                        f.result()
-                    except Exception as e:
-                        if not is_cancel_exc(e) and real_err is None:
-                            real_err = e
-                            state['abort'] = True   # أوقف التحميل الآخر فوراً
+            with Stopwatch('download'):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = [
+                        executor.submit(download_worker, info, url, video_id, video_tmp, make_hook(tracker, 'video')),
+                        executor.submit(download_worker, info, url, audio_id, audio_tmp, make_hook(tracker, 'audio')),
+                    ]
+                    for f in concurrent.futures.as_completed(futures):
+                        try:
+                            f.result()
+                        except Exception as e:
+                            if not is_cancel_exc(e) and real_err is None:
+                                real_err = e
+                                state['abort'] = True   # أوقف التحميل الآخر فوراً
 
             if real_err is not None:
                 raise real_err
             if state['user_cancel']:
                 raise JobCancelled()
 
-            result = run_merge(video_tmp, audio_tmp, final_path)
+            log_timing(f'[size] video={fmt_size(video_tmp)} audio={fmt_size(audio_tmp)}')
+
+            # الدمج يكتب داخلياً (سريع)
+            with Stopwatch('merge'):
+                result = run_merge(video_tmp, audio_tmp, merged_tmp)
             if result == 'CANCELLED':
                 raise JobCancelled()
             if result != 'SUCCESS':
                 raise RuntimeError(f'Merge Error: {result}')
+
+            # حرّر المساحة قبل النقل
+            remove_quiet(video_tmp, audio_tmp)
+
+            log_timing(f'[size] merged={fmt_size(merged_tmp)}')
+
+            # نقل تسلسلي واحد إلى Downloads
+            with Stopwatch('move'):
+                move_to_final(merged_tmp, final_path, MERGE_END, SAVE_END)
 
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError('Output file is missing or empty.')
